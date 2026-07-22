@@ -25,7 +25,7 @@ class TestCli:
         runner = CliRunner()
         result = runner.invoke(cli, ["plugins"])
         assert result.exit_code == 0
-        assert "audit" in result.output
+        assert "AUDIT" in result.output
 
     def test_scan_no_target(self):
         from xfweb.cli.main import cli
