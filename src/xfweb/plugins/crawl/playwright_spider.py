@@ -38,6 +38,7 @@ API_PATTERN = re.compile(r'["\']/(api|v[0-9]+|graphql|rest)/[^"\']*["\']')
 _playwright_ok: bool | None = None
 _shared_browser: Any = None
 _pw_instance: Any = None
+_connection_alive: bool = False
 
 
 def _check_playwright_driver() -> bool:
@@ -49,20 +50,22 @@ def _check_playwright_driver() -> bool:
     try:
         from playwright.async_api import async_playwright
     except ImportError:
-        logger.warning("xfweb.playwright.python_package_missing")
         _playwright_ok = False
         return False
 
     node_bin = shutil.which("node")
     if node_bin is None:
-        logger.warning("xfweb.playwright.node_not_found", hint="Install Node.js: apt install nodejs")
         _playwright_ok = False
         return False
 
     async def _test() -> None:
         pw = async_playwright()
         obj = await pw.start()
-        await obj.stop()
+        try:
+            browser = await obj.chromium.launch(headless=True)
+            await browser.close()
+        finally:
+            await obj.stop()
 
     try:
         try:
@@ -79,38 +82,37 @@ def _check_playwright_driver() -> bool:
             asyncio.run(asyncio.wait_for(_test(), timeout=15.0))
         _playwright_ok = True
         return True
-    except Exception as exc:
-        err = str(exc)
-        if "backgroundColorNames" in err or "getter" in err:
-            hint = (
-                "Node.js version incompatible with system Playwright. "
-                "Fix: pip install playwright && playwright install chromium"
-            )
-        elif "No such file" in err or "node" in err.lower():
-            hint = "Run: playwright install chromium"
-        else:
-            hint = "Run: pip install playwright && playwright install chromium"
-        logger.warning("xfweb.playwright.driver_broken", error=err, hint=hint)
+    except Exception:
         _playwright_ok = False
         return False
 
 
 async def _get_shared_browser(headless: bool = True) -> Any:
     """Get or create a shared browser instance."""
-    global _shared_browser, _pw_instance
-    if _shared_browser and _shared_browser.is_connected():
-        return _shared_browser
+    global _shared_browser, _pw_instance, _connection_alive
+    if _shared_browser and _connection_alive:
+        try:
+            if _shared_browser.is_connected():
+                return _shared_browser
+        except Exception:
+            _connection_alive = False
 
     from playwright.async_api import async_playwright
-    _pw_instance = async_playwright()
-    pw = await _pw_instance.start()
-    _shared_browser = await pw.chromium.launch(headless=headless)
-    return _shared_browser
+    try:
+        _pw_instance = async_playwright()
+        pw = await _pw_instance.start()
+        _shared_browser = await pw.chromium.launch(headless=headless)
+        _connection_alive = True
+        return _shared_browser
+    except Exception:
+        _connection_alive = False
+        raise
 
 
 async def close_shared_browser() -> None:
     """Close the shared browser instance."""
-    global _shared_browser, _pw_instance
+    global _shared_browser, _pw_instance, _connection_alive
+    _connection_alive = False
     if _shared_browser:
         try:
             await _shared_browser.close()
@@ -123,6 +125,14 @@ async def close_shared_browser() -> None:
         except Exception:
             pass
         _pw_instance = None
+
+
+def _mark_connection_dead() -> None:
+    """Mark the shared browser connection as dead."""
+    global _connection_alive, _shared_browser, _pw_instance
+    _connection_alive = False
+    _shared_browser = None
+    _pw_instance = None
 
 
 class PlaywrightCrawlerPlugin(CrawlPlugin):
@@ -149,6 +159,8 @@ class PlaywrightCrawlerPlugin(CrawlPlugin):
         if not _check_playwright_driver():
             return []
 
+        browser = None
+        page = None
         try:
             browser = await _get_shared_browser(self.options.get("headless", True))
             page = await browser.new_page()
@@ -156,98 +168,98 @@ class PlaywrightCrawlerPlugin(CrawlPlugin):
             api_requests: list[str] = []
             page.on("request", lambda req: self._on_request(req, api_requests))
 
-            try:
-                await page.goto(
-                    freq.url.raw_url,
-                    wait_until=self.options.get("wait_for_load", "networkidle"),
-                    timeout=self.options.get("timeout", 30000),
-                )
-
-                links = await self._extract_rendered_links(page)
-                for link in links:
-                    full_url = urljoin(freq.url.raw_url, link)
-                    try:
-                        parsed = parse_url(full_url)
-                        discovered.append(FuzzableRequest.from_url(parsed))
-                    except Exception:
-                        pass
-
-                js_routes = await self._extract_js_routes(page)
-                for route in js_routes:
-                    full_url = urljoin(freq.url.raw_url, route)
-                    try:
-                        parsed = parse_url(full_url)
-                        discovered.append(FuzzableRequest.from_url(parsed))
-                    except Exception:
-                        pass
-
-                forms = await self._extract_forms(page)
-                for form_action, method, data in forms:
-                    full_url = urljoin(freq.url.raw_url, form_action)
-                    try:
-                        parsed = parse_url(full_url)
-                        discovered.append(FuzzableRequest.from_parts(
-                            url=parsed,
-                            method=method,
-                            post_data=data if method == "POST" else None,
-                        ))
-                    except Exception:
-                        pass
-
-                # Add intercepted API requests
-                for api_url in api_requests:
-                    try:
-                        parsed = parse_url(api_url)
-                        discovered.append(FuzzableRequest.from_url(parsed))
-                    except Exception:
-                        pass
-
-            except Exception as exc:
-                logger.warning("xfweb.playwright.error", url=freq.url.raw_url, error=str(exc))
-            finally:
-                await page.close()
-
-        except Exception as exc:
-            logger.warning(
-                "xfweb.playwright.crashed",
-                url=freq.url.raw_url,
-                error=str(exc),
-                hint="Run: playwright install chromium && playwright install-deps",
+            await page.goto(
+                freq.url.raw_url,
+                wait_until=self.options.get("wait_for_load", "networkidle"),
+                timeout=self.options.get("timeout", 30000),
             )
+
+            links = await self._extract_rendered_links(page)
+            for link in links:
+                full_url = urljoin(freq.url.raw_url, link)
+                try:
+                    parsed = parse_url(full_url)
+                    discovered.append(FuzzableRequest.from_url(parsed))
+                except Exception:
+                    pass
+
+            js_routes = await self._extract_js_routes(page)
+            for route in js_routes:
+                full_url = urljoin(freq.url.raw_url, route)
+                try:
+                    parsed = parse_url(full_url)
+                    discovered.append(FuzzableRequest.from_url(parsed))
+                except Exception:
+                    pass
+
+            forms = await self._extract_forms(page)
+            for form_action, method, data in forms:
+                full_url = urljoin(freq.url.raw_url, form_action)
+                try:
+                    parsed = parse_url(full_url)
+                    discovered.append(FuzzableRequest.from_parts(
+                        url=parsed,
+                        method=method,
+                        post_data=data if method == "POST" else None,
+                    ))
+                except Exception:
+                    pass
+
+            for api_url in api_requests:
+                try:
+                    parsed = parse_url(api_url)
+                    discovered.append(FuzzableRequest.from_url(parsed))
+                except Exception:
+                    pass
+
+        except Exception:
+            _mark_connection_dead()
             return []
+        finally:
+            if page:
+                try:
+                    await page.close()
+                except Exception:
+                    pass
 
         logger.info("xfweb.playwright.crawled", url=freq.url.raw_url, discovered=len(discovered))
         return discovered
 
     async def _extract_rendered_links(self, page: Any) -> list[str]:
         """Extract all visible links from the rendered page."""
-        links = await page.evaluate("""
-            () => {
-                const links = [];
-                document.querySelectorAll('a[href], area[href], [data-href]').forEach(el => {
-                    const href = el.getAttribute('href') || el.getAttribute('data-href');
-                    if (href && !href.startsWith('#') && !href.startsWith('javascript:')) {
-                        links.push(href);
-                    }
-                });
-                return [...new Set(links)];
-            }
-        """)
-        return links
+        try:
+            links = await page.evaluate("""
+                () => {
+                    const links = [];
+                    document.querySelectorAll('a[href], area[href], [data-href]').forEach(el => {
+                        const href = el.getAttribute('href') || el.getAttribute('data-href');
+                        if (href && !href.startsWith('#') && !href.startsWith('javascript:')) {
+                            links.push(href);
+                        }
+                    });
+                    return [...new Set(links)];
+                }
+            """)
+            return links
+        except Exception:
+            return []
 
     async def _extract_js_routes(self, page: Any) -> list[str]:
         """Extract routes from JavaScript source code."""
         routes: set[str] = set()
 
-        scripts = await page.evaluate("""
-            () => {
-                const scripts = [];
-                document.querySelectorAll('script[src]').forEach(el => {
-                    scripts.push(el.getAttribute('src'));
-                });
-                return scripts;
-            }
-        """)
+        try:
+            scripts = await page.evaluate("""
+                () => {
+                    const scripts = [];
+                    document.querySelectorAll('script[src]').forEach(el => {
+                        scripts.push(el.getAttribute('src'));
+                    });
+                    return scripts;
+                }
+            """)
+        except Exception:
+            return []
 
         for script_url in scripts:
             if not script_url or not script_url.startswith("http"):
@@ -264,7 +276,11 @@ class PlaywrightCrawlerPlugin(CrawlPlugin):
             except Exception:
                 pass
 
-        content = await page.content()
+        try:
+            content = await page.content()
+        except Exception:
+            return list(routes)
+
         for pattern in JS_ROUTE_PATTERNS:
             for match in pattern.finditer(content):
                 route = match.group(1)
@@ -279,30 +295,32 @@ class PlaywrightCrawlerPlugin(CrawlPlugin):
 
     async def _extract_forms(self, page: Any) -> list[tuple[str, str, str]]:
         """Extract forms from the rendered page."""
-        forms_data = await page.evaluate("""
-            () => {
-                const forms = [];
-                document.querySelectorAll('form').forEach(form => {
-                    const action = form.getAttribute('action') || '';
-                    const method = (form.getAttribute('method') || 'GET').toUpperCase();
-                    const inputs = {};
-                    form.querySelectorAll('input, select, textarea').forEach(input => {
-                        const name = input.getAttribute('name');
-                        if (name) {
-                            inputs[name] = input.value || '';
-                        }
+        try:
+            forms_data = await page.evaluate("""
+                () => {
+                    const forms = [];
+                    document.querySelectorAll('form').forEach(form => {
+                        const action = form.getAttribute('action') || '';
+                        const method = (form.getAttribute('method') || 'GET').toUpperCase();
+                        const inputs = {};
+                        form.querySelectorAll('input, select, textarea').forEach(input => {
+                            const name = input.getAttribute('name');
+                            if (name) {
+                                inputs[name] = input.value || '';
+                            }
+                        });
+                        forms.push({
+                            action: action,
+                            method: method,
+                            data: Object.entries(inputs).map(([k,v]) => k + '=' + v).join('&')
+                        });
                     });
-                    forms.push({
-                        action: action,
-                        method: method,
-                        data: Object.entries(inputs).map(([k,v]) => k + '=' + v).join('&')
-                    });
-                });
-                return forms;
-            }
-        """)
-
-        return [(f["action"], f["method"], f["data"]) for f in forms_data]
+                    return forms;
+                }
+            """)
+            return [(f["action"], f["method"], f["data"]) for f in forms_data]
+        except Exception:
+            return []
 
     def _on_request(self, request: Any, discovered: list) -> None:
         """Capture API requests made by the SPA."""

@@ -514,6 +514,11 @@ def scan(
     asyncio.run(_run_scan())
 
 
+# Suppress "Task exception was never retrieved" noise from Playwright/Node.js
+import logging as __logging
+__logging.getLogger("asyncio").setLevel(__logging.CRITICAL)
+
+
 @cli.command()
 @click.option("--host", default="0.0.0.0", help="API server host")
 @click.option("--port", default=8080, type=int, help="API server port")
