@@ -2,7 +2,7 @@
 
 > Next-generation web application security scanner with AI-powered detection, modern auth testing, and full API coverage.
 
-[![CI](https://github.com/xfweb/xfweb/actions/workflows/ci.yml/badge.svg)](https://github.com/xfweb/xfweb/actions)
+[![CI](https://github.com/Cazo-Net/Xfweb/actions/workflows/ci.yml/badge.svg)](https://github.com/Cazo-Net/Xfweb/actions)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
 
@@ -25,7 +25,19 @@ Xfweb is a free, open-source web application security scanner that combines the 
 ### Install
 
 ```bash
-pip install xfweb
+# From GitHub (recommended)
+pip install git+https://github.com/Cazo-Net/Xfweb.git
+
+# Or clone and install locally
+git clone https://github.com/Cazo-Net/Xfweb.git
+cd Xfweb
+pip install -e .
+
+# With AI support (OpenAI / Anthropic)
+pip install "git+https://github.com/Cazo-Net/Xfweb.git[ai]"
+
+# Install Playwright browsers (required for SPA crawling)
+playwright install chromium
 ```
 
 ### CLI Scan

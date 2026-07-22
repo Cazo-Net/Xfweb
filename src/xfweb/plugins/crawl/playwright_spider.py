@@ -64,7 +64,16 @@ class PlaywrightCrawlerPlugin(CrawlPlugin):
             return []
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=self.options.get("headless", True))
+            try:
+                browser = await p.chromium.launch(headless=self.options.get("headless", True))
+            except Exception as exc:
+                logger.warning(
+                    "xfweb.playwright.browser_not_installed",
+                    error=str(exc),
+                    hint="Run: playwright install chromium",
+                )
+                return []
+
             page = await browser.new_page()
 
             page.on("request", lambda req: self._on_request(req, discovered))
