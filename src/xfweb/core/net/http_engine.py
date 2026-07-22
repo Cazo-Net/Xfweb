@@ -1,7 +1,8 @@
 """Async HTTP engine powered by httpx with HTTP/2 support.
 
 Replaces w3af's urllib2-based ExtendedUrllib with a modern async client.
-Features: HTTP/2, connection pooling, rate limiting, adaptive timeouts.
+Features: HTTP/2, connection pooling, rate limiting, adaptive timeouts,
+retry with exponential backoff.
 """
 
 from __future__ import annotations
@@ -29,11 +30,14 @@ class HttpResponse:
     history: list[Any] = field(default_factory=list)
     elapsed_ms: float = 0.0
     http_version: str = "1.1"
+    request_method: str = ""
+    request_headers: dict[str, str] = field(default_factory=dict)
+    request_body: str = ""
 
     @property
     def is_text(self) -> bool:
         content_type = self.headers.get("content-type", "")
-        return any(t in content_type for t in ["text/", "application/json", "application/xml"])
+        return any(t in content_type for t in ["text/", "application/json", "application/xml", "text/html"])
 
     @property
     def json(self) -> Any:
@@ -44,9 +48,49 @@ class HttpResponse:
     def content_type(self) -> str:
         return self.headers.get("content-type", "")
 
+    @property
+    def cookies(self) -> dict[str, str]:
+        return {k: v for k, v in self.headers.items() if k.lower() == "set-cookie"}
+
+    @property
+    def server(self) -> str:
+        return self.headers.get("server", "")
+
+    @property
+    def content_length(self) -> int:
+        return len(self.body)
+
+    @property
+    def is_redirect(self) -> bool:
+        return self.status_code in (301, 302, 303, 307, 308)
+
+
+class RateLimiter:
+    """Token bucket rate limiter using asyncio primitives."""
+
+    def __init__(self, rate: float) -> None:
+        self._rate = rate
+        self._tokens = rate
+        self._last_refill = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        async with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_refill
+            self._tokens = min(self._rate, self._tokens + elapsed * self._rate)
+            self._last_refill = now
+
+            if self._tokens < 1.0:
+                wait_time = (1.0 - self._tokens) / self._rate
+                await asyncio.sleep(wait_time)
+                self._tokens = 0.0
+            else:
+                self._tokens -= 1.0
+
 
 class HttpEngine:
-    """Async HTTP client with HTTP/2, connection pooling, and rate limiting."""
+    """Async HTTP client with HTTP/2, connection pooling, rate limiting, and retry."""
 
     def __init__(
         self,
@@ -55,20 +99,31 @@ class HttpEngine:
         proxy: str | None = None,
         timeout: float = 30.0,
         max_connections: int = 100,
+        max_retries: int = 3,
+        retry_delay: float = 0.5,
     ) -> None:
         self.user_agent = user_agent
         self.rate_limit = rate_limit
         self.proxy = proxy
         self.timeout = timeout
+        self.max_connections = max_connections
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
         self._client: httpx.AsyncClient | None = None
-        self._rate_limiter: asyncio.TokenBucket | None = None
+        self._rate_limiter: RateLimiter | None = None
 
         self.request_count: int = 0
         self.error_count: int = 0
         self.urls_crawled: int = 0
+        self._crawled_urls: set[str] = set()
 
         if rate_limit > 0:
-            self._rate_limiter = asyncio.TokenBucket(rate_limit, rate_limit)
+            self._rate_limiter = RateLimiter(rate_limit)
+
+    def _track_crawl(self, url: str) -> None:
+        if url not in self._crawled_urls:
+            self._crawled_urls.add(url)
+            self.urls_crawled += 1
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -76,7 +131,7 @@ class HttpEngine:
                 http2=True,
                 verify=True,
                 limits=httpx.Limits(
-                    max_connections=self.timeout and 100,
+                    max_connections=self.max_connections,
                     max_keepalive_connections=20,
                     keepalive_expiry=30,
                 ),
@@ -109,47 +164,80 @@ class HttpEngine:
     async def options(self, url: str, **kwargs: Any) -> HttpResponse:
         return await self._request("OPTIONS", url, **kwargs)
 
+    async def patch(self, url: str, **kwargs: Any) -> HttpResponse:
+        return await self._request("PATCH", url, **kwargs)
+
     async def _request(self, method: str, url: str, **kwargs: Any) -> HttpResponse:
         if self._rate_limiter:
             await self._rate_limiter.acquire()
 
         client = await self._get_client()
-        start = time.monotonic()
+        last_error: Exception | None = None
 
-        try:
-            response = await client.request(method, url, **kwargs)
-            elapsed = (time.monotonic() - start) * 1000
-            self.request_count += 1
+        for attempt in range(self.max_retries):
+            start = time.monotonic()
+            try:
+                req_kwargs = dict(kwargs)
+                response = await client.request(method, url, **req_kwargs)
+                elapsed = (time.monotonic() - start) * 1000
+                self.request_count += 1
+                self._track_crawl(url)
 
-            logger.debug(
-                "xfweb.http.request",
-                method=method,
-                url=url,
-                status=response.status_code,
-                elapsed_ms=round(elapsed, 1),
-            )
+                logger.debug(
+                    "xfweb.http.request",
+                    method=method,
+                    url=url,
+                    status=response.status_code,
+                    elapsed_ms=round(elapsed, 1),
+                    attempt=attempt + 1,
+                )
 
-            return HttpResponse(
-                status_code=response.status_code,
-                headers=dict(response.headers),
-                body=response.content,
-                text=response.text,
-                url=str(response.url),
-                history=[str(r.url) for r in response.history],
-                elapsed_ms=elapsed,
-                http_version=response.http_version,
-            )
+                return HttpResponse(
+                    status_code=response.status_code,
+                    headers=dict(response.headers),
+                    body=response.content,
+                    text=response.text,
+                    url=str(response.url),
+                    history=[str(r.url) for r in response.history],
+                    elapsed_ms=elapsed,
+                    http_version=response.http_version,
+                    request_method=method,
+                    request_headers=dict(response.request.headers) if hasattr(response, "request") else {},
+                    request_body=str(kwargs.get("data", "")) if "data" in kwargs else "",
+                )
 
-        except Exception as exc:
-            self.error_count += 1
-            logger.warning("xfweb.http.error", method=method, url=url, error=str(exc))
-            return HttpResponse(
-                status_code=0,
-                headers={},
-                body=b"",
-                text="",
-                url=url,
-            )
+            except (httpx.TransportError, httpx.TimeoutException) as exc:
+                last_error = exc
+                self.error_count += 1
+                logger.warning(
+                    "xfweb.http.retry",
+                    method=method,
+                    url=url,
+                    attempt=attempt + 1,
+                    max_retries=self.max_retries,
+                    error=str(exc),
+                )
+                if attempt < self.max_retries - 1:
+                    delay = self.retry_delay * (2 ** attempt)
+                    await asyncio.sleep(delay)
+                continue
+
+            except Exception as exc:
+                self.error_count += 1
+                logger.warning("xfweb.http.error", method=method, url=url, error=str(exc))
+                break
+
+        self.error_count += 1
+        logger.warning("xfweb.http.failed", method=method, url=url, error=str(last_error))
+        return HttpResponse(
+            status_code=0,
+            headers={},
+            body=b"",
+            text="",
+            url=url,
+            request_method=method,
+            request_body=str(kwargs.get("data", "")) if "data" in kwargs else "",
+        )
 
     async def send_websocket(self, url: str, messages: list[str] | None = None) -> dict[str, Any]:
         """Connect to a WebSocket endpoint and exchange messages."""

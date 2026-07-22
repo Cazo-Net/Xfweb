@@ -21,14 +21,8 @@ XXE_PAYLOADS = [
 ]
 
 XXE_ERROR_PATTERNS = [
-    "xml parsing",
-    "xml declaration",
-    "entity reference",
-    "doctype",
-    "external entity",
-    "lxml.etree",
-    "sax",
-    "xmlparser",
+    "xml parsing", "xml declaration", "entity reference", "doctype",
+    "external entity", "lxml.etree", "sax", "xmlparser",
 ]
 
 
@@ -55,27 +49,35 @@ class XxePlugin(AuditPlugin):
             "Content-Type": "application/xml",
             "Accept": "application/xml, text/xml, */*",
         }
-
-        resp = await http.post(
-            freq.url.raw_url,
-            content=payload.encode(),
-            headers=headers,
-        )
+        resp = await http.post(freq.url.raw_url, content=payload.encode(), headers=headers)
 
         if resp.status_code == 200:
             if "root:" in resp.text or "[fonts]" in resp.text or "localhost" in resp.text:
-                logger.warning(
-                    "xfweb.xxe.vuln_found",
+                self.report_finding(
+                    name=f"XXE on {freq.url.raw_url}",
+                    severity="critical",
                     url=freq.url.raw_url,
-                    payload=payload[:80],
+                    description="XML External Entity injection detected. The application "
+                    "processes XML entities and returns file contents.",
+                    evidence=f"Payload: {payload[:120]}\nFile content found in response",
+                    http_request={"method": "POST", "url": freq.url.raw_url, "data": payload[:200]},
+                    http_response={"status": resp.status_code, "body_excerpt": resp.text[:500]},
+                    remediation="Disable XML external entity processing. Use JSON instead of XML. "
+                    "Validate and sanitize XML input. Use defusedxml library.",
                 )
                 return
 
         for pattern in XXE_ERROR_PATTERNS:
             if pattern.lower() in resp.text.lower():
-                logger.info(
-                    "xfweb.xxe.potential",
+                self.report_finding(
+                    name=f"Potential XXE on {freq.url.raw_url}",
+                    severity="medium",
                     url=freq.url.raw_url,
-                    error_pattern=pattern,
+                    description=f"XML error pattern detected ({pattern}). "
+                    "The endpoint processes XML but may be vulnerable to XXE.",
+                    evidence=f"Error pattern: {pattern}\nPayload: {payload[:120]}",
+                    http_request={"method": "POST", "url": freq.url.raw_url},
+                    http_response={"status": resp.status_code, "body_excerpt": resp.text[:300]},
+                    remediation="Disable XML external entity processing.",
                 )
                 return

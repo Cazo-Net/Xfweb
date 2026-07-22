@@ -30,5 +30,15 @@ class FrontpagePlugin(AuditPlugin):
         for path in self.FPSE_PATHS:
             resp = await http.get(f"{base}{path}")
             if resp.status_code == 200 and ("fpse" in resp.text.lower() or "_vti_" in resp.text.lower()):
-                logger.warning("xfweb.frontpage.detected", url=f"{base}{path}")
+                self.report_finding(
+                    name=f"FrontPage Server Extensions detected at {path}",
+                    severity="info",
+                    url=f"{base}{path}",
+                    description="FrontPage Server Extensions (FPSE) detected. "
+                    "FPSE is outdated and may contain known vulnerabilities.",
+                    evidence=f"Path: {path}\nFPSE markers found in response",
+                    http_request={"method": "GET", "url": f"{base}{path}"},
+                    http_response={"status": resp.status_code},
+                    remediation="Remove FrontPage Server Extensions. Use modern deployment tools.",
+                )
                 return

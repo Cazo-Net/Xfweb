@@ -10,7 +10,7 @@ Implements the producer-consumer architecture from w3af, modernized with asyncio
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 import structlog
 
@@ -35,14 +35,22 @@ class ScanStrategy:
             logger.warning("xfweb.strategy.no_seed_requests")
             return
 
+        for req in seed_requests:
+            self.core.kb.store_fuzzable_request(req)
+
         await self._discovery_phase(seed_requests)
         await self._audit_phase()
         await self._grep_phase()
         await self._output_phase()
 
-        logger.info("xfweb.strategy.complete", findings=len(self.core.kb))
+        logger.info(
+            "xfweb.strategy.complete",
+            findings=len(self.core.kb),
+            urls_crawled=self.core.http.urls_crawled,
+            requests_made=self.core.http.request_count,
+        )
 
-    def _seed(self) -> list:
+    def _seed(self) -> list[Any]:
         """Create initial FuzzableRequests from target URLs."""
         from xfweb.core.data.url import parse_url
         from xfweb.core.data.url.fuzzable_request import FuzzableRequest
@@ -52,7 +60,7 @@ class ScanStrategy:
         logger.info("xfweb.strategy.seed", count=len(requests))
         return requests
 
-    async def _discovery_phase(self, seed_requests: list) -> None:
+    async def _discovery_phase(self, seed_requests: list[Any]) -> None:
         """Run crawl and infrastructure plugins to discover endpoints."""
         logger.info("xfweb.strategy.discovery_start")
         crawl_plugins = self.core.plugins.get_plugins_by_category("crawl")
@@ -63,14 +71,17 @@ class ScanStrategy:
             logger.warning("xfweb.strategy.no_discovery_plugins")
             return
 
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue[Any] = asyncio.Queue()
         for req in seed_requests:
             await queue.put(req)
 
         discovered: set[str] = set()
-        while not queue.empty() and self.core.state.value == "running":
+        max_pages = 500
+        pages_crawled = 0
+
+        while not queue.empty() and self.core.state.value == "running" and pages_crawled < max_pages:
             try:
-                req = await asyncio.wait_for(queue.get(), timeout=1.0)
+                req = await asyncio.wait_for(queue.get(), timeout=2.0)
             except asyncio.TimeoutError:
                 break
 
@@ -78,13 +89,17 @@ class ScanStrategy:
             if req_key in discovered:
                 continue
             discovered.add(req_key)
+            pages_crawled += 1
 
             for plugin in discovery_plugins:
                 try:
                     new_requests = await plugin.run(req, self.core.http)
-                    for new_req in new_requests:
-                        if new_req.url.raw_url not in discovered:
-                            await queue.put(new_req)
+                    if new_requests:
+                        for new_req in new_requests:
+                            new_url = new_req.url.raw_url
+                            if new_url not in discovered:
+                                await queue.put(new_req)
+                                self.core.kb.store_fuzzable_request(new_req)
                 except Exception as exc:
                     logger.error(
                         "xfweb.strategy.discovery_error",
@@ -104,7 +119,11 @@ class ScanStrategy:
             return
 
         fuzzable_requests = self.core.kb.get_all_fuzzable_requests()
-        logger.info("xfweb.strategy.audit_targets", count=len(fuzzable_requests), plugins=len(audit_plugins))
+        logger.info(
+            "xfweb.strategy.audit_targets",
+            count=len(fuzzable_requests),
+            plugins=len(audit_plugins),
+        )
 
         semaphore = asyncio.Semaphore(self.core.config.max_threads)
 

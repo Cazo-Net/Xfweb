@@ -31,10 +31,7 @@ class RfiPlugin(AuditPlugin):
         params = self._extract_params(freq)
         if not params:
             return
-
-        tasks = []
-        for param_name, param_value in params.items():
-            tasks.append(self._test_param(freq, param_name, param_value, http))
+        tasks = [self._test_param(freq, p, v, http) for p, v in params.items()]
         await asyncio.gather(*tasks, return_exceptions=True)
 
     def _extract_params(self, freq: Any) -> dict[str, str]:
@@ -54,16 +51,21 @@ class RfiPlugin(AuditPlugin):
     async def _test_param(self, freq: Any, param: str, value: str, http: HttpEngine) -> None:
         for payload in RFI_PAYLOADS:
             modified_url = freq.url.raw_url.replace(
-                f"{param}={value}",
-                f"{param}={payload}",
+                f"{param}={value}", f"{param}={payload}",
             )
             resp = await http.get(modified_url)
-
             if resp.status_code == 200 and "shell" in resp.text.lower():
-                logger.warning(
-                    "xfweb.rfi.vuln_found",
+                self.report_finding(
+                    name=f"Remote File Inclusion via '{param}'",
+                    severity="high",
                     url=freq.url.raw_url,
-                    param=param,
-                    payload=payload,
+                    description=f"RFI vulnerability in parameter '{param}'. "
+                    "The application fetches and includes remote files.",
+                    parameter=param,
+                    evidence=f"Payload: {payload}\nRemote file content found in response",
+                    http_request={"method": freq.method, "url": modified_url},
+                    http_response={"status": resp.status_code, "body_excerpt": resp.text[:500]},
+                    remediation="Do not include remote files based on user input. "
+                    "Use a whitelist of allowed URLs. Disable remote file inclusion (allow_url_include=Off).",
                 )
                 return

@@ -110,6 +110,7 @@ class XfwebCore:
                 include=self.config.plugins,
                 exclude=self.config.exclude_plugins,
                 enable_ai=self.config.enable_ai,
+                kb=self.kb,
             )
             self.state = ScanState.RUNNING
             await self._emit_event("scan_running")

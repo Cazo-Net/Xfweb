@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 import structlog
@@ -55,20 +56,26 @@ class ReDoSPlugin(AuditPlugin):
         baseline = await http.get(freq.url.raw_url)
 
         for payload in REDOS_PAYLOADS:
-            import time
             start = time.monotonic()
             modified_url = freq.url.raw_url.replace(
-                f"{param}={value}",
-                f"{param}={payload}",
+                f"{param}={value}", f"{param}={payload}",
             )
             resp = await http.get(modified_url)
             elapsed = time.monotonic() - start
 
             if elapsed > 5.0:
-                logger.warning(
-                    "xfweb.redos.vuln_found",
+                self.report_finding(
+                    name=f"ReDoS via '{param}' parameter",
+                    severity="medium",
                     url=freq.url.raw_url,
-                    param=param,
-                    time_seconds=round(elapsed, 1),
+                    description=f"Regular expression denial of service in parameter '{param}'. "
+                    f"Server took {elapsed:.1f}s to process the payload.",
+                    parameter=param,
+                    evidence=f"Payload length: {len(payload)}\nElapsed: {elapsed:.1f}s\n"
+                    f"Payload: {repr(payload[:100])}",
+                    http_request={"method": freq.method, "url": modified_url},
+                    http_response={"status": resp.status_code},
+                    remediation="Fix vulnerable regular expressions. Use non-backtracking "
+                    "regex engines. Apply input length limits.",
                 )
                 return

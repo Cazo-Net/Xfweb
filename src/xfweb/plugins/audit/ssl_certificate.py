@@ -30,17 +30,16 @@ class SslCertificatePlugin(AuditPlugin):
 
         try:
             cert_info = self._get_cert_info(hostname, port)
-        except Exception as exc:
-            logger.debug("xfweb.ssl.cert_error", host=hostname, error=str(exc))
+        except Exception:
             return
 
         if not cert_info:
             return
 
-        self._check_expiry(cert_info, hostname)
-        self._check_self_signed(cert_info, hostname)
-        self._check_weak_key(cert_info, hostname)
-        self._check_weak_cipher(cert_info, hostname)
+        self._check_expiry(cert_info, freq)
+        self._check_self_signed(cert_info, freq)
+        self._check_weak_key(cert_info, freq)
+        self._check_weak_cipher(cert_info, freq)
 
     def _get_cert_info(self, hostname: str, port: int) -> dict[str, Any] | None:
         context = ssl.create_default_context()
@@ -49,7 +48,6 @@ class SslCertificatePlugin(AuditPlugin):
                 cert = ssock.getpeercert()
                 cipher = ssock.cipher()
                 version = ssock.version()
-
                 return {
                     "subject": dict(x[0] for x in cert.get("subject", [])),
                     "issuer": dict(x[0] for x in cert.get("issuer", [])),
@@ -62,50 +60,71 @@ class SslCertificatePlugin(AuditPlugin):
                     "san": cert.get("subjectAltName", []),
                 }
 
-    def _check_expiry(self, cert: dict[str, Any], hostname: str) -> None:
+    def _check_expiry(self, cert: dict[str, Any], freq: Any) -> None:
         try:
             not_after = datetime.strptime(cert["notAfter"], "%b %d %H:%M:%S %Y %Z")
             now = datetime.now(timezone.utc)
             days_left = (not_after.replace(tzinfo=timezone.utc) - now).days
-
             if days_left < 0:
-                logger.warning(
-                    "xfweb.ssl.expired",
-                    host=hostname,
-                    expired_on=cert["notAfter"],
+                self.report_finding(
+                    name=f"Expired SSL certificate on {freq.url.hostname}",
+                    severity="high",
+                    url=freq.url.raw_url,
+                    description=f"SSL certificate expired on {cert['notAfter']}.",
+                    evidence=f"Expired: {cert['notAfter']}\nIssuer: {cert.get('issuer', {})}",
+                    http_request={"method": "GET", "url": freq.url.raw_url},
+                    remediation="Renew the SSL certificate immediately.",
                 )
             elif days_left < 30:
-                logger.warning(
-                    "xfweb.ssl.expiring_soon",
-                    host=hostname,
-                    days_left=days_left,
+                self.report_finding(
+                    name=f"SSL certificate expiring soon on {freq.url.hostname}",
+                    severity="medium",
+                    url=freq.url.raw_url,
+                    description=f"SSL certificate expires in {days_left} days.",
+                    evidence=f"Expires: {cert['notAfter']}\nDays left: {days_left}",
+                    http_request={"method": "GET", "url": freq.url.raw_url},
+                    remediation="Renew the SSL certificate before expiration.",
                 )
         except Exception:
             pass
 
-    def _check_self_signed(self, cert: dict[str, Any], hostname: str) -> None:
-        subject = cert.get("subject", {})
-        issuer = cert.get("issuer", {})
-        if subject == issuer:
-            logger.warning("xfweb.ssl.self_signed", host=hostname)
-
-    def _check_weak_key(self, cert: dict[str, Any], hostname: str) -> None:
-        protocol = cert.get("protocol", "")
-        if "TLSv1.0" in protocol or "TLSv1.1" in protocol:
-            logger.warning(
-                "xfweb.ssl.weak_protocol",
-                host=hostname,
-                protocol=protocol,
+    def _check_self_signed(self, cert: dict[str, Any], freq: Any) -> None:
+        if cert.get("subject") == cert.get("issuer"):
+            self.report_finding(
+                name=f"Self-signed SSL certificate on {freq.url.hostname}",
+                severity="medium",
+                url=freq.url.raw_url,
+                description="The SSL certificate is self-signed. Browsers will show security warnings.",
+                evidence=f"Subject: {cert.get('subject')}\nIssuer: {cert.get('issuer')}",
+                http_request={"method": "GET", "url": freq.url.raw_url},
+                remediation="Use a certificate from a trusted Certificate Authority.",
             )
 
-    def _check_weak_cipher(self, cert: dict[str, Any], hostname: str) -> None:
+    def _check_weak_key(self, cert: dict[str, Any], freq: Any) -> None:
+        protocol = cert.get("protocol", "")
+        if "TLSv1.0" in protocol or "TLSv1.1" in protocol:
+            self.report_finding(
+                name=f"Weak TLS protocol on {freq.url.hostname}",
+                severity="high",
+                url=freq.url.raw_url,
+                description=f"Server uses weak TLS protocol: {protocol}.",
+                evidence=f"Protocol: {protocol}",
+                http_request={"method": "GET", "url": freq.url.raw_url},
+                remediation="Disable TLSv1.0 and TLSv1.1. Use TLSv1.2 or TLSv1.3.",
+            )
+
+    def _check_weak_cipher(self, cert: dict[str, Any], freq: Any) -> None:
         cipher = cert.get("cipher", "")
         weak_ciphers = ["RC4", "DES", "3DES", "MD5", "NULL", "EXPORT", "anon"]
         for weak in weak_ciphers:
             if weak.lower() in cipher.lower():
-                logger.warning(
-                    "xfweb.ssl.weak_cipher",
-                    host=hostname,
-                    cipher=cipher,
+                self.report_finding(
+                    name=f"Weak SSL cipher on {freq.url.hostname}",
+                    severity="high",
+                    url=freq.url.raw_url,
+                    description=f"Weak cipher suite detected: {cipher}.",
+                    evidence=f"Cipher: {cipher}",
+                    http_request={"method": "GET", "url": freq.url.raw_url},
+                    remediation="Configure strong cipher suites (AES-GCM, CHACHA20).",
                 )
                 return

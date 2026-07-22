@@ -22,7 +22,7 @@ BUFFER_SIZES = [
 ERROR_PATTERNS = [
     "segmentation fault", "core dumped", "stack smashing",
     "buffer overflow", "memory violation", "fatal error",
-    "500 internal server error", "application error",
+    "application error",
 ]
 
 
@@ -57,25 +57,33 @@ class BufferOverflowPlugin(AuditPlugin):
         baseline = await http.get(freq.url.raw_url)
 
         for label, payload in BUFFER_SIZES:
-            modified_url = freq.url.raw_url.replace(
-                f"{param}={value}",
-                f"{param}={payload}",
-            )
+            modified_url = freq.url.raw_url.replace(f"{param}={value}", f"{param}={payload}")
             resp = await http.get(modified_url)
             if resp.status_code >= 500:
-                logger.warning(
-                    "xfweb.buffer_overflow.potential",
+                self.report_finding(
+                    name=f"Buffer overflow via '{param}' ({label} input)",
+                    severity="medium",
                     url=freq.url.raw_url,
-                    param=param,
-                    size=label,
+                    description=f"Server returned 500 error with {label} input ({len(payload)} chars) "
+                    f"in parameter '{param}'. Possible buffer overflow.",
+                    parameter=param,
+                    evidence=f"Input size: {len(payload)} chars\nStatus: {resp.status_code}",
+                    http_request={"method": freq.method, "url": modified_url},
+                    http_response={"status": resp.status_code},
+                    remediation="Validate input length limits. Use safe string handling functions.",
                 )
                 return
             for pattern in ERROR_PATTERNS:
                 if pattern in resp.text.lower() and pattern not in baseline.text.lower():
-                    logger.warning(
-                        "xfweb.buffer_overflow.error",
+                    self.report_finding(
+                        name=f"Buffer overflow error via '{param}'",
+                        severity="medium",
                         url=freq.url.raw_url,
-                        param=param,
-                        error_pattern=pattern,
+                        description=f"Error pattern '{pattern}' triggered by oversized input in '{param}'.",
+                        parameter=param,
+                        evidence=f"Error pattern: {pattern}\nInput size: {len(payload)}",
+                        http_request={"method": freq.method, "url": modified_url},
+                        http_response={"status": resp.status_code},
+                        remediation="Validate input length. Use memory-safe languages/functions.",
                     )
                     return

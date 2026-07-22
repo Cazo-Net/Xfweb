@@ -1,8 +1,9 @@
-"""Unrestricted file upload audit plugin."""
+"""Unrestricted file upload, response splitting, and CORS audit plugins."""
 
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 import structlog
@@ -17,12 +18,6 @@ DANGEROUS_EXTENSIONS = [
     "asp", "aspx", "asa", "asax", "ascx", "ashx", "asmx",
     "jsp", "jspx", "jspa", "jsw", "jsv", "jtml",
     "cer", "cdx", "htr", "shtml",
-]
-
-SHELL_CONTENTS = [
-    '<?php echo "XFWEB_TEST"; ?>',
-    '<% Response.Write("XFWEB_TEST") %>',
-    '<?php echo md5("xfweb"); ?>',
 ]
 
 
@@ -41,12 +36,10 @@ class FileUploadPlugin(AuditPlugin):
             if "multipart/form-data" not in resp.text:
                 return
 
-        import re
         form_pattern = re.compile(
             r'<form[^>]*action=["\']([^"\']*)["\'][^>]*enctype=["\']multipart/form-data["\'][^>]*>',
             re.IGNORECASE,
         )
-
         forms = form_pattern.findall(resp.text)
         if not forms:
             form_pattern2 = re.compile(
@@ -56,10 +49,17 @@ class FileUploadPlugin(AuditPlugin):
             forms = form_pattern2.findall(resp.text)
 
         for action in forms:
-            logger.info(
-                "xfweb.file_upload.found",
+            self.report_finding(
+                name=f"File upload form found at {action}",
+                severity="info",
                 url=freq.url.raw_url,
-                action=action,
+                description=f"A multipart file upload form was found at {action}. "
+                "Verify that file type validation, size limits, and malware scanning are in place.",
+                evidence=f"Upload action: {action}",
+                http_request={"method": "GET", "url": freq.url.raw_url},
+                remediation="Validate file extensions, MIME types, and content. "
+                "Set maximum file size. Store uploads outside webroot. "
+                "Scan for malware.",
             )
 
 
@@ -80,7 +80,6 @@ class ResponseSplittingPlugin(AuditPlugin):
         params = self._extract_params(freq)
         if not params:
             return
-
         tasks = [self._test_param(freq, p, v, http) for p, v in params.items()]
         await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -100,16 +99,19 @@ class ResponseSplittingPlugin(AuditPlugin):
 
     async def _test_param(self, freq: Any, param: str, value: str, http: HttpEngine) -> None:
         for payload in self.CRLF_PAYLOADS:
-            modified_url = freq.url.raw_url.replace(
-                f"{param}={value}",
-                f"{param}={value}{payload}",
-            )
+            modified_url = freq.url.raw_url.replace(f"{param}={value}", f"{param}={value}{payload}")
             resp = await http.get(modified_url)
-            if "Injected-Header" in resp.headers.get("", "") or "Injected-Header" in resp.text:
-                logger.warning(
-                    "xfweb.response_splitting.vuln_found",
+            if "Injected-Header" in str(resp.headers) or "Injected-Header" in resp.text:
+                self.report_finding(
+                    name=f"HTTP response splitting via '{param}'",
+                    severity="high",
                     url=freq.url.raw_url,
-                    param=param,
+                    description=f"HTTP response splitting via CRLF injection in '{param}'.",
+                    parameter=param,
+                    evidence=f"Payload: {payload}\nInjected header found",
+                    http_request={"method": "GET", "url": modified_url},
+                    http_response={"status": resp.status_code},
+                    remediation="Sanitize CRLF characters from all user input in HTTP responses.",
                 )
                 return
 
@@ -134,21 +136,31 @@ class CorsOriginPlugin(AuditPlugin):
     async def _test_origin(self, freq: Any, http: HttpEngine, origin_template: str) -> None:
         origin = origin_template.replace("{hostname}", freq.url.hostname)
         headers = {"Origin": origin}
-
         resp = await http.get(freq.url.raw_url, headers=headers)
         acao = resp.headers.get("access-control-allow-origin", "")
 
         if acao == "*" or acao == origin:
             acac = resp.headers.get("access-control-allow-credentials", "")
             if acac.lower() == "true":
-                logger.warning(
-                    "xfweb.cors.vuln_found",
+                self.report_finding(
+                    name=f"CORS misconfiguration with credentials on {freq.url.raw_url}",
+                    severity="high",
                     url=freq.url.raw_url,
-                    origin=origin,
-                    credentials="true",
+                    description=f"CORS reflects arbitrary origin '{origin}' with credentials. "
+                    "This allows cross-origin credential theft.",
+                    evidence=f"Origin: {origin}\nACAO: {acao}\nACAC: {acac}",
+                    http_request={"method": "GET", "url": freq.url.raw_url, "headers": {"Origin": origin}},
+                    http_response={"status": resp.status_code},
+                    remediation="Validate Origin header against a strict allowlist. "
+                    "Never reflect arbitrary origins with credentials.",
                 )
             elif acao == "*":
-                logger.info(
-                    "xfweb.cors.wildcard",
+                self.report_finding(
+                    name=f"CORS wildcard origin on {freq.url.raw_url}",
+                    severity="low",
                     url=freq.url.raw_url,
+                    description="CORS uses wildcard (*) for Access-Control-Allow-Origin.",
+                    evidence=f"ACAO: {acao}",
+                    http_request={"method": "GET", "url": freq.url.raw_url},
+                    remediation="Restrict CORS to specific trusted origins.",
                 )

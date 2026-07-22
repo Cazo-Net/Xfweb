@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from typing import Any
 
 import structlog
@@ -22,8 +21,6 @@ COMMAND_PAYLOADS = [
     ("$(id)", ["uid=", "gid="]),
     (";cat /etc/passwd", ["root:"]),
     ("|cat /etc/passwd", ["root:"]),
-    (";whoami", []),  # Check for non-error response
-    ("||whoami", []),
 ]
 
 WIN_COMMAND_PAYLOADS = [
@@ -72,15 +69,18 @@ class OsCommandingPlugin(AuditPlugin):
             )
             resp = await http.get(modified_url)
 
-            if not markers:
-                if resp.status_code == 200 and len(resp.body) > 0:
-                    continue
-
             if resp.status_code == 200 and any(marker in resp.text for marker in markers):
-                logger.warning(
-                    "xfweb.os_commanding.vuln_found",
+                self.report_finding(
+                    name=f"OS Command Injection via '{param}'",
+                    severity="critical",
                     url=freq.url.raw_url,
-                    param=param,
-                    payload=payload,
+                    description=f"OS command injection detected in parameter '{param}'. "
+                    f"Payload successfully executed a system command.",
+                    parameter=param,
+                    evidence=f"Payload: {payload}\nCommand output markers: {[m for m in markers if m in resp.text]}",
+                    http_request={"method": freq.method, "url": modified_url},
+                    http_response={"status": resp.status_code, "body_excerpt": resp.text[:500]},
+                    remediation="Never pass user input to system commands. "
+                    "Use parameterized APIs. Apply strict input validation.",
                 )
                 return

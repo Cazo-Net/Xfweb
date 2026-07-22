@@ -27,8 +27,9 @@ from typing import Any, TYPE_CHECKING
 import structlog
 
 if TYPE_CHECKING:
-    from xfweb.core.net.http_engine import HttpEngine
+    from xfweb.core.net.http_engine import HttpEngine, HttpResponse
     from xfweb.core.data.url.fuzzable_request import FuzzableRequest
+    from xfweb.core.data.kb.knowledge_base import KnowledgeBase, Finding
 
 logger = structlog.get_logger()
 
@@ -42,6 +43,7 @@ class Plugin(ABC):
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}
+        self.kb: KnowledgeBase | None = None
 
     @abstractmethod
     async def run(self, target: Any, http: HttpEngine) -> Any:
@@ -52,6 +54,61 @@ class Plugin(ABC):
 
     def set_options(self, options: dict[str, Any]) -> None:
         self.options.update(options)
+
+    def set_kb(self, kb: KnowledgeBase) -> None:
+        self.kb = kb
+
+    def report_finding(
+        self,
+        name: str,
+        severity: str,
+        url: str,
+        description: str,
+        parameter: str = "",
+        evidence: str = "",
+        http_request: dict[str, Any] | None = None,
+        http_response: dict[str, Any] | None = None,
+        remediation: str = "",
+    ) -> None:
+        """Report a finding to the knowledge base."""
+        if not self.kb:
+            return
+
+        from xfweb.core.data.kb.knowledge_base import Finding, Severity
+
+        severity_map = {
+            "information": Severity.INFORMATION,
+            "low": Severity.LOW,
+            "medium": Severity.MEDIUM,
+            "high": Severity.HIGH,
+            "critical": Severity.CRITICAL,
+        }
+        sev = severity_map.get(severity.lower(), Severity.MEDIUM)
+
+        finding = Finding(
+            name=name,
+            severity=sev,
+            description=description,
+            url=url,
+            parameter=parameter,
+            plugin_name=self.plugin_name,
+            evidence=evidence,
+            http_request=http_request or {},
+            http_response=http_response or {},
+            remediation=remediation,
+        )
+
+        location = f"{self.plugin_name}:{url}"
+        added = self.kb.append_uniq(location, finding)
+        if added:
+            logger.warning(
+                "xfweb.finding.new",
+                plugin=self.plugin_name,
+                name=name,
+                severity=severity,
+                url=url,
+                param=parameter,
+            )
 
 
 class AuditPlugin(Plugin):

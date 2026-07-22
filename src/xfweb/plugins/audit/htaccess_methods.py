@@ -25,17 +25,29 @@ class HtaccessMethodsPlugin(AuditPlugin):
         for method in self.DANGEROUS_METHODS:
             resp = await http._request(method, freq.url.raw_url)
             if resp.status_code in (200, 204):
-                logger.warning(
-                    "xfweb.htaccess_methods.dangerous",
+                self.report_finding(
+                    name=f"Dangerous HTTP method '{method}' enabled",
+                    severity="low" if method in ("OPTIONS", "PUT", "DELETE") else "medium",
                     url=freq.url.raw_url,
-                    method=method,
+                    description=f"HTTP method {method} is allowed on this endpoint. "
+                    f"This could allow unauthorized data modification.",
+                    evidence=f"Method: {method}\nStatus: {resp.status_code}",
+                    http_request={"method": method, "url": freq.url.raw_url},
+                    http_response={"status": resp.status_code},
+                    remediation=f"Disable the {method} method if not required. "
+                    "Configure server access controls.",
                 )
             elif method == "OPTIONS" and resp.status_code == 200:
                 allow = resp.headers.get("allow", "")
                 dangerous_found = [m for m in self.DANGEROUS_METHODS if m in allow.upper()]
                 if dangerous_found:
-                    logger.warning(
-                        "xfweb.htaccess_methods.options_disclosure",
+                    self.report_finding(
+                        name=f"Dangerous HTTP methods disclosed via OPTIONS",
+                        severity="low",
                         url=freq.url.raw_url,
-                        allowed_methods=dangerous_found,
+                        description=f"OPTIONS response reveals dangerous methods: {dangerous_found}",
+                        evidence=f"Allow header: {allow}",
+                        http_request={"method": "OPTIONS", "url": freq.url.raw_url},
+                        http_response={"status": resp.status_code},
+                        remediation="Restrict allowed HTTP methods to only those required.",
                     )

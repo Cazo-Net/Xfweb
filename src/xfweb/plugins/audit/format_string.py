@@ -59,8 +59,32 @@ class FormatStringPlugin(AuditPlugin):
             )
             resp = await http.get(modified_url)
             if resp.status_code >= 500 and resp.status_code != baseline.status_code:
-                logger.warning("xfweb.format_string.vuln_found", url=freq.url.raw_url, param=param)
+                self.report_finding(
+                    name=f"Format string vulnerability in '{param}'",
+                    severity="high",
+                    url=freq.url.raw_url,
+                    description=f"Format string injection detected in parameter '{param}'. "
+                    "The server returns a 500 error when format specifiers are injected.",
+                    parameter=param,
+                    evidence=f"Payload: {payload}\nBaseline status: {baseline.status_code}\n"
+                    f"Injected status: {resp.status_code}",
+                    http_request={"method": freq.method, "url": freq.url.raw_url},
+                    http_response={"status": resp.status_code},
+                    remediation="Never pass user input as a format string. "
+                    "Use parameterized formatting: format('%s', user_input).",
+                )
                 return
             if indicator == "python" and "__class__" in resp.text:
-                logger.warning("xfweb.format_string.vuln_found", url=freq.url.raw_url, param=param)
+                self.report_finding(
+                    name=f"Python format string injection in '{param}'",
+                    severity="critical",
+                    url=freq.url.raw_url,
+                    description=f"Python format string injection in parameter '{param}'. "
+                    "Object attribute access via format string confirmed.",
+                    parameter=param,
+                    evidence=f"Payload: {payload}\n__class__ found in response",
+                    http_request={"method": freq.method, "url": freq.url.raw_url},
+                    http_response={"status": resp.status_code, "body_excerpt": resp.text[:500]},
+                    remediation="Never pass user input as a format string.",
+                )
                 return

@@ -19,6 +19,7 @@ import structlog
 
 if TYPE_CHECKING:
     from xfweb.core.plugins.plugin_base import Plugin
+    from xfweb.core.data.kb.knowledge_base import KnowledgeBase
 
 logger = structlog.get_logger()
 
@@ -92,6 +93,7 @@ class PluginManager:
         include: list[str] | None = None,
         exclude: list[str] | None = None,
         enable_ai: bool = False,
+        kb: KnowledgeBase | None = None,
     ) -> None:
         """Load specified plugins or all if none specified."""
         if not self._plugin_classes:
@@ -110,6 +112,8 @@ class PluginManager:
             try:
                 plugin_cls = self._plugin_classes[name]
                 instance = plugin_cls()
+                if kb:
+                    instance.set_kb(kb)
                 self._plugins[name] = instance
                 logger.info("xfweb.plugins.loaded", name=name, category=plugin_cls.category)
             except Exception as exc:

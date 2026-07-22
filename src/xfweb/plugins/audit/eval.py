@@ -65,10 +65,17 @@ class EvalPlugin(AuditPlugin):
 
             if resp.status_code == 200 and expected in resp.text:
                 if expected not in baseline.text or resp.text != baseline.text:
-                    logger.warning(
-                        "xfweb.eval.vuln_found",
+                    self.report_finding(
+                        name=f"Code evaluation injection via '{param}'",
+                        severity="critical",
                         url=freq.url.raw_url,
-                        param=param,
-                        payload=payload,
+                        description=f"Code evaluation vulnerability in parameter '{param}'. "
+                        f"The application evaluates user input as code.",
+                        parameter=param,
+                        evidence=f"Payload: {payload}\nExpected result '{expected}' found in response",
+                        http_request={"method": freq.method, "url": modified_url},
+                        http_response={"status": resp.status_code, "body_excerpt": resp.text[:500]},
+                        remediation="Never evaluate user input as code. "
+                        "Use safe parsing functions. Apply strict input validation.",
                     )
                     return
