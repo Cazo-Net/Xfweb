@@ -9,6 +9,7 @@ import structlog
 
 from xfweb.core.plugins.plugin_base import AuditPlugin
 from xfweb.core.net.http_engine import HttpEngine
+from xfweb.core.data.parsers.param_extractor import extract_params
 
 logger = structlog.get_logger()
 
@@ -36,13 +37,7 @@ class GlobalRedirectPlugin(AuditPlugin):
         await asyncio.gather(*tasks, return_exceptions=True)
 
     def _extract_params(self, freq: Any) -> dict[str, str]:
-        params: dict[str, str] = {}
-        if freq.url.query:
-            for pair in freq.url.query.split("&"):
-                if "=" in pair:
-                    k, v = pair.split("=", 1)
-                    params[k] = v
-        return params
+        return extract_params(freq)
 
     async def _test_param(self, freq: Any, param: str, value: str, http: HttpEngine) -> None:
         for payload in REDIRECT_PAYLOADS:

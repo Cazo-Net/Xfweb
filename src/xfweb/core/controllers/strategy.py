@@ -48,6 +48,13 @@ class ScanStrategy:
         for i in range(len(parts)):
             self._target_subdomains.add(".".join(parts[i:]))
 
+        # Add any explicitly provided scope domains
+        for s in self.core.config.scope:
+            self._target_subdomains.add(s)
+        # Remove any explicitly excluded domains
+        for s in self.core.config.exclude_scope:
+            self._target_subdomains.discard(s)
+
         for req in seed_requests:
             self.core.kb.store_fuzzable_request(req)
 

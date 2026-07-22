@@ -222,12 +222,22 @@ def _print_results(findings: list[dict[str, Any]], stats: dict[str, Any], output
     elif fmt == "sarif":
         outfile = output_dir / "results.sarif"
         _write_sarif(findings, outfile)
+    elif fmt == "html":
+        outfile = output_dir / "report.html"
+        _write_html_report(findings, stats, outfile)
     else:
         outfile = output_dir / f"results.{fmt}"
         with open(outfile, "w") as f:
             json.dump({"findings": findings, "stats": stats}, f, indent=2)
 
+    # Always generate HTML alongside primary output
+    if fmt != "html":
+        html_path = output_dir / "report.html"
+        _write_html_report(findings, stats, html_path)
+
     console.print(f"  [bold green]►[/] Results saved to [bold cyan]{outfile}[/]")
+    if fmt != "html":
+        console.print(f"  [bold green]►[/] HTML report at [bold cyan]{output_dir / 'report.html'}[/]")
     console.print()
 
 
@@ -268,6 +278,70 @@ def _write_sarif(findings: list[dict[str, Any]], path: Path) -> None:
         json.dump(sarif, f, indent=2)
 
 
+def _write_html_report(findings: list[dict[str, Any]], stats: dict[str, Any], path: Path) -> None:
+    """Write a professional pentest-style HTML report."""
+    from xfweb.plugins.output.html_file import HTML_TEMPLATE, FINDING_TEMPLATE
+
+    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "information": 0}
+    findings_html_parts: list[str] = []
+
+    for f in findings:
+        sev = f.get("severity", "information")
+        counts[sev] = counts.get(sev, 0) + 1
+
+        param_html = ""
+        if f.get("parameter"):
+            param_html = f'<p><span class="detail-label">Parameter:</span> <code>{html.escape(f["parameter"])}</code></p>'
+
+        evidence_html = ""
+        if f.get("evidence"):
+            evidence_html = f'<p><span class="detail-label">Evidence:</span></p><div class="evidence">{html.escape(f["evidence"])}</div>'
+
+        remediation_html = ""
+        if f.get("remediation"):
+            remediation_html = f'<div class="remediation"><strong>Remediation:</strong> {html.escape(f["remediation"])}</div>'
+
+        findings_html_parts.append(FINDING_TEMPLATE.format(
+            severity=sev,
+            name=html.escape(f.get("name", "Unknown")),
+            url=html.escape(f.get("url", "#")),
+            parameter_html=param_html,
+            plugin=html.escape(f.get("plugin_name", "N/A")),
+            description=html.escape(f.get("description", "")),
+            evidence_html=evidence_html,
+            remediation_html=remediation_html,
+        ))
+
+    stats_html = ""
+    if findings:
+        stats_html = '<h2 style="color: var(--info); margin: 30px 0 16px;">Statistics</h2>'
+        stats_html += '<table class="stats-table"><tr><th>Metric</th><th>Value</th></tr>'
+        stats_html += f'<tr><td>Total Findings</td><td>{len(findings)}</td></tr>'
+        stats_html += f'<tr><td>Critical</td><td class="critical">{counts["critical"]}</td></tr>'
+        stats_html += f'<tr><td>High</td><td class="high">{counts["high"]}</td></tr>'
+        stats_html += f'<tr><td>Medium</td><td class="medium">{counts["medium"]}</td></tr>'
+        stats_html += f'<tr><td>Low</td><td class="low">{counts["low"]}</td></tr>'
+        stats_html += '</table>'
+
+    from datetime import datetime, timezone
+    html_content = HTML_TEMPLATE.format(
+        version=__version__,
+        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        target=findings[0].get("url", "N/A") if findings else "N/A",
+        total=len(findings),
+        critical=counts["critical"],
+        high=counts["high"],
+        medium=counts["medium"],
+        low=counts["low"],
+        info=counts["information"],
+        findings_html="\n".join(findings_html_parts),
+        stats_html=stats_html,
+    )
+
+    with open(path, "w") as f:
+        f.write(html_content)
+
+
 # ── CLI commands ────────────────────────────────────────────────────────────
 
 @click.group()
@@ -295,6 +369,8 @@ def cli() -> None:
 @click.option("--header", multiple=True, help="Custom header (Key: Value, repeatable)")
 @click.option("--max-scan-time", default=14400, type=int, help="Max scan time in seconds (0=unlimited)")
 @click.option("--max-pages", default=500, type=int, help="Max pages to crawl")
+@click.option("--scope", multiple=True, help="Domain scope (repeatable, e.g. --scope example.com)")
+@click.option("--exclude-scope", multiple=True, help="Exclude domain from scope (repeatable)")
 def scan(
     target: str,
     profile: str | None,
@@ -313,6 +389,8 @@ def scan(
     header: tuple[str, ...],
     max_scan_time: int,
     max_pages: int,
+    scope: tuple[str, ...],
+    exclude_scope: tuple[str, ...],
 ) -> None:
     """Scan a web application for vulnerabilities."""
     from xfweb.core.controllers.w3af_core import XfwebCore, ScanConfig
@@ -356,6 +434,8 @@ def scan(
         extra_headers=extra_headers,
         extra_cookies=extra_cookies,
         max_scan_time=max_scan_time,
+        scope=list(scope) if scope else [],
+        exclude_scope=list(exclude_scope) if exclude_scope else [],
     )
 
     _print_target_info(target, profile, plugins, enable_ai)

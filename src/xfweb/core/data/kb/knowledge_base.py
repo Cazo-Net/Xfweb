@@ -50,11 +50,12 @@ class Finding:
 class KnowledgeBase:
     """Central store for all scan findings."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_responses: int = 5000) -> None:
         self._lock = threading.RLock()
         self._findings: dict[str, list[Finding]] = {}
         self._responses: list[Any] = []
         self._fuzzable_requests: list[Any] = []
+        self._max_responses = max_responses
 
     def __len__(self) -> int:
         with self._lock:
@@ -79,6 +80,8 @@ class KnowledgeBase:
 
     def store_response(self, response: Any) -> None:
         with self._lock:
+            if self._max_responses > 0 and len(self._responses) >= self._max_responses:
+                return
             self._responses.append(response)
 
     def store_fuzzable_request(self, freq: Any) -> None:
