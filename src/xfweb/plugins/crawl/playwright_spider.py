@@ -63,63 +63,65 @@ class PlaywrightCrawlerPlugin(CrawlPlugin):
             logger.warning("xfweb.playwright.not_installed")
             return []
 
-        async with async_playwright() as p:
-            try:
+        try:
+            async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=self.options.get("headless", True))
-            except Exception as exc:
-                logger.warning(
-                    "xfweb.playwright.browser_not_installed",
-                    error=str(exc),
-                    hint="Run: playwright install chromium",
-                )
-                return []
 
-            page = await browser.new_page()
+                page = await browser.new_page()
 
-            page.on("request", lambda req: self._on_request(req, discovered))
+                page.on("request", lambda req: self._on_request(req, discovered))
 
-            try:
-                await page.goto(
-                    freq.url.raw_url,
-                    wait_until=self.options.get("wait_for_load", "networkidle"),
-                    timeout=self.options.get("timeout", 30000),
-                )
+                try:
+                    await page.goto(
+                        freq.url.raw_url,
+                        wait_until=self.options.get("wait_for_load", "networkidle"),
+                        timeout=self.options.get("timeout", 30000),
+                    )
 
-                links = await self._extract_rendered_links(page)
-                for link in links:
-                    full_url = urljoin(freq.url.raw_url, link)
-                    try:
-                        parsed = parse_url(full_url)
-                        discovered.append(FuzzableRequest.from_url(parsed))
-                    except Exception:
-                        pass
+                    links = await self._extract_rendered_links(page)
+                    for link in links:
+                        full_url = urljoin(freq.url.raw_url, link)
+                        try:
+                            parsed = parse_url(full_url)
+                            discovered.append(FuzzableRequest.from_url(parsed))
+                        except Exception:
+                            pass
 
-                js_routes = await self._extract_js_routes(page)
-                for route in js_routes:
-                    full_url = urljoin(freq.url.raw_url, route)
-                    try:
-                        parsed = parse_url(full_url)
-                        discovered.append(FuzzableRequest.from_url(parsed))
-                    except Exception:
-                        pass
+                    js_routes = await self._extract_js_routes(page)
+                    for route in js_routes:
+                        full_url = urljoin(freq.url.raw_url, route)
+                        try:
+                            parsed = parse_url(full_url)
+                            discovered.append(FuzzableRequest.from_url(parsed))
+                        except Exception:
+                            pass
 
-                forms = await self._extract_forms(page)
-                for form_action, method, data in forms:
-                    full_url = urljoin(freq.url.raw_url, form_action)
-                    try:
-                        parsed = parse_url(full_url)
-                        discovered.append(FuzzableRequest.from_parts(
-                            url=parsed,
-                            method=method,
-                            post_data=data if method == "POST" else None,
-                        ))
-                    except Exception:
-                        pass
+                    forms = await self._extract_forms(page)
+                    for form_action, method, data in forms:
+                        full_url = urljoin(freq.url.raw_url, form_action)
+                        try:
+                            parsed = parse_url(full_url)
+                            discovered.append(FuzzableRequest.from_parts(
+                                url=parsed,
+                                method=method,
+                                post_data=data if method == "POST" else None,
+                            ))
+                        except Exception:
+                            pass
 
-            except Exception as exc:
-                logger.warning("xfweb.playwright.error", url=freq.url.raw_url, error=str(exc))
-            finally:
-                await browser.close()
+                except Exception as exc:
+                    logger.warning("xfweb.playwright.error", url=freq.url.raw_url, error=str(exc))
+                finally:
+                    await browser.close()
+
+        except Exception as exc:
+            logger.warning(
+                "xfweb.playwright.crashed",
+                url=freq.url.raw_url,
+                error=str(exc),
+                hint="Run: playwright install chromium && playwright install-deps",
+            )
+            return []
 
         logger.info("xfweb.playwright.crawled", url=freq.url.raw_url, discovered=len(discovered))
         return discovered
