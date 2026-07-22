@@ -290,6 +290,11 @@ def cli() -> None:
 @click.option("--enable-ai", is_flag=True, help="Enable AI-powered detection")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 @click.option("--no-banner", is_flag=True, help="Suppress the ASCII banner")
+@click.option("--auth-token", help="Bearer token for authenticated scanning")
+@click.option("--cookie", multiple=True, help="Cookie to include (key=value, repeatable)")
+@click.option("--header", multiple=True, help="Custom header (Key: Value, repeatable)")
+@click.option("--max-scan-time", default=14400, type=int, help="Max scan time in seconds (0=unlimited)")
+@click.option("--max-pages", default=500, type=int, help="Max pages to crawl")
 def scan(
     target: str,
     profile: str | None,
@@ -303,6 +308,11 @@ def scan(
     enable_ai: bool,
     verbose: bool,
     no_banner: bool,
+    auth_token: str | None,
+    cookie: tuple[str, ...],
+    header: tuple[str, ...],
+    max_scan_time: int,
+    max_pages: int,
 ) -> None:
     """Scan a web application for vulnerabilities."""
     from xfweb.core.controllers.w3af_core import XfwebCore, ScanConfig
@@ -318,6 +328,20 @@ def scan(
             ],
         )
 
+    # Parse cookies
+    extra_cookies: dict[str, str] = {}
+    for c in cookie:
+        if "=" in c:
+            k, v = c.split("=", 1)
+            extra_cookies[k.strip()] = v.strip()
+
+    # Parse headers
+    extra_headers: dict[str, str] = {}
+    for h in header:
+        if ":" in h:
+            k, v = h.split(":", 1)
+            extra_headers[k.strip()] = v.strip()
+
     config = ScanConfig(
         target=target,
         profile=profile,
@@ -328,6 +352,10 @@ def scan(
         proxy=proxy,
         output_dir=Path(output),
         enable_ai=enable_ai,
+        auth_token=auth_token or "",
+        extra_headers=extra_headers,
+        extra_cookies=extra_cookies,
+        max_scan_time=max_scan_time,
     )
 
     _print_target_info(target, profile, plugins, enable_ai)
@@ -335,17 +363,61 @@ def scan(
     console.print("  [bold red]►[/] Initializing scan engine...")
     console.print(f"  [dim]  ├─ Threads: {max_threads}[/]")
     console.print(f"  [dim]  ├─ Rate limit: {'unlimited' if rate_limit == 0 else f'{rate_limit} req/s'}[/]")
+    console.print(f"  [dim]  ├─ Auth: {'token' if auth_token else 'cookie' if extra_cookies else 'none'}[/]")
     console.print(f"  [dim]  ├─ Proxy: {proxy or 'direct'}[/]")
+    console.print(f"  [dim]  ├─ Max scan time: {max_scan_time}s[/]")
     console.print(f"  [dim]  └─ Output: {output}/ ({output_format})[/]")
     console.print()
 
     start_time = time.monotonic()
 
+    # Real-time progress tracking
+    phase_status = {"phase": "init", "pages": 0, "tested": 0, "findings": 0, "total": 0}
+    progress_task = None
+
+    async def _on_event(event: str, data: dict[str, Any] | None = None) -> None:
+        nonlocal progress_task
+        if event == "progress" and data:
+            phase_status["phase"] = data.get("phase", phase_status["phase"])
+            if "pages_crawled" in data:
+                phase_status["pages"] = data["pages_crawled"]
+            if "tested" in data:
+                phase_status["tested"] = data["tested"]
+            if "total" in data:
+                phase_status["total"] = data["total"]
+            if "findings" in data:
+                phase_status["findings"] = data["findings"]
+        elif event == "phase" and data:
+            phase_status["phase"] = data.get("phase", phase_status["phase"])
+
     async def _run_scan() -> None:
         core = XfwebCore(config)
+        core.on_event(_on_event)
+
+        # Start scan in background
+        scan_task = asyncio.create_task(core.start())
+
+        # Progress display
+        last_phase = ""
         with _make_progress() as progress:
             task = progress.add_task("[bold red]SCANNING[/]", total=None)
-            await core.start()
+            while not scan_task.done():
+                await asyncio.sleep(0.5)
+                phase = phase_status["phase"]
+                if phase == "discovery":
+                    desc = f"[bold cyan]CRAWL[/] {phase_status['pages']} pages"
+                elif phase == "audit":
+                    desc = f"[bold yellow]AUDIT[/] {phase_status['tested']}/{phase_status['total']} tested"
+                elif phase == "grep":
+                    desc = "[bold blue]GREP[/] Analyzing..."
+                elif phase == "output":
+                    desc = "[bold green]OUTPUT[/] Generating..."
+                else:
+                    desc = f"[bold red]{phase.upper()}[/]"
+                if phase_status["findings"] > 0:
+                    desc += f" | [bold red]{phase_status['findings']} findings[/]"
+                progress.update(task, description=desc)
+            await scan_task
             progress.update(task, description="[bold green]COMPLETE[/]")
 
         findings = core.get_findings()

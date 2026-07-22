@@ -2,7 +2,7 @@
 
 Replaces w3af's urllib2-based ExtendedUrllib with a modern async client.
 Features: HTTP/2, connection pooling, rate limiting, adaptive timeouts,
-retry with exponential backoff.
+retry with exponential backoff, session/cookie management, custom headers.
 """
 
 from __future__ import annotations
@@ -37,7 +37,10 @@ class HttpResponse:
     @property
     def is_text(self) -> bool:
         content_type = self.headers.get("content-type", "")
-        return any(t in content_type for t in ["text/", "application/json", "application/xml", "text/html"])
+        return any(t in content_type for t in [
+            "text/", "application/json", "application/xml",
+            "text/html", "application/javascript",
+        ])
 
     @property
     def json(self) -> Any:
@@ -50,7 +53,13 @@ class HttpResponse:
 
     @property
     def cookies(self) -> dict[str, str]:
-        return {k: v for k, v in self.headers.items() if k.lower() == "set-cookie"}
+        result: dict[str, str] = {}
+        for key, value in self.headers.items():
+            if key.lower() == "set-cookie":
+                parts = value.split(";")[0].split("=", 1)
+                if len(parts) == 2:
+                    result[parts[0].strip()] = parts[1].strip()
+        return result
 
     @property
     def server(self) -> str:
@@ -90,7 +99,8 @@ class RateLimiter:
 
 
 class HttpEngine:
-    """Async HTTP client with HTTP/2, connection pooling, rate limiting, and retry."""
+    """Async HTTP client with HTTP/2, connection pooling, rate limiting,
+    retry with backoff, session/cookie management, and custom headers."""
 
     def __init__(
         self,
@@ -101,6 +111,8 @@ class HttpEngine:
         max_connections: int = 100,
         max_retries: int = 3,
         retry_delay: float = 0.5,
+        extra_headers: dict[str, str] | None = None,
+        extra_cookies: dict[str, str] | None = None,
     ) -> None:
         self.user_agent = user_agent
         self.rate_limit = rate_limit
@@ -109,6 +121,8 @@ class HttpEngine:
         self.max_connections = max_connections
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self._extra_headers = extra_headers or {}
+        self._extra_cookies = extra_cookies or {}
         self._client: httpx.AsyncClient | None = None
         self._rate_limiter: RateLimiter | None = None
 
@@ -125,6 +139,25 @@ class HttpEngine:
             self._crawled_urls.add(url)
             self.urls_crawled += 1
 
+    def set_cookies(self, cookies: dict[str, str]) -> None:
+        """Update session cookies (e.g., after login)."""
+        self._extra_cookies.update(cookies)
+        if self._client and not self._client.is_closed:
+            for k, v in cookies.items():
+                self._client.cookies.set(k, v)
+
+    def set_headers(self, headers: dict[str, str]) -> None:
+        """Update session headers (e.g., after auth token obtained)."""
+        self._extra_headers.update(headers)
+
+    def get_cookies(self) -> dict[str, str]:
+        """Get all current session cookies."""
+        cookies = dict(self._extra_cookies)
+        if self._client and not self._client.is_closed:
+            for k, v in self._client.cookies.items():
+                cookies[k] = v
+        return cookies
+
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
             transport = httpx.AsyncHTTPTransport(
@@ -136,9 +169,14 @@ class HttpEngine:
                     keepalive_expiry=30,
                 ),
             )
+
+            headers = {"User-Agent": self.user_agent}
+            headers.update(self._extra_headers)
+
             self._client = httpx.AsyncClient(
                 transport=transport,
-                headers={"User-Agent": self.user_agent},
+                headers=headers,
+                cookies=self._extra_cookies,
                 timeout=httpx.Timeout(self.timeout),
                 proxy=self.proxy,
                 follow_redirects=True,
@@ -182,6 +220,10 @@ class HttpEngine:
                 elapsed = (time.monotonic() - start) * 1000
                 self.request_count += 1
                 self._track_crawl(url)
+
+                # Update cookies from response
+                for name, value in response.cookies.items():
+                    self._extra_cookies[name] = value
 
                 logger.debug(
                     "xfweb.http.request",

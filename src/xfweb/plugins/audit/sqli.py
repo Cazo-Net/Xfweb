@@ -15,6 +15,7 @@ import structlog
 
 from xfweb.core.plugins.plugin_base import AuditPlugin
 from xfweb.core.net.http_engine import HttpEngine
+from xfweb.core.data.parsers.param_extractor import extract_params
 
 logger = structlog.get_logger()
 
@@ -140,19 +141,7 @@ class SqliPlugin(AuditPlugin):
         await asyncio.gather(*tasks, return_exceptions=True)
 
     def _extract_params(self, freq: Any) -> dict[str, str]:
-        params: dict[str, str] = {}
-        if freq.post_data:
-            if isinstance(freq.post_data, str):
-                for pair in freq.post_data.split("&"):
-                    if "=" in pair:
-                        k, v = pair.split("=", 1)
-                        params[k] = v
-        if freq.url.query:
-            for pair in freq.url.query.split("&"):
-                if "=" in pair:
-                    k, v = pair.split("=", 1)
-                    params[k] = v
-        return params
+        return extract_params(freq)
 
     async def _get_baseline(self, freq: Any, http: HttpEngine) -> Any:
         return await http.get(freq.url.raw_url)

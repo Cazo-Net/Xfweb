@@ -5,7 +5,7 @@ endpoints that a traditional HTML parser would miss. It handles:
 - React/Vue/Angular SPA route discovery
 - JavaScript-rendered content extraction
 - Dynamic form detection
-- MutationObserver-based change detection
+- Browser instance reuse for efficiency
 """
 
 from __future__ import annotations
@@ -36,6 +36,8 @@ JS_ROUTE_PATTERNS = [
 API_PATTERN = re.compile(r'["\']/(api|v[0-9]+|graphql|rest)/[^"\']*["\']')
 
 _playwright_ok: bool | None = None
+_shared_browser: Any = None
+_pw_instance: Any = None
 
 
 def _check_playwright_driver() -> bool:
@@ -84,6 +86,36 @@ def _check_playwright_driver() -> bool:
         return False
 
 
+async def _get_shared_browser(headless: bool = True) -> Any:
+    """Get or create a shared browser instance."""
+    global _shared_browser, _pw_instance
+    if _shared_browser and _shared_browser.is_connected():
+        return _shared_browser
+
+    from playwright.async_api import async_playwright
+    _pw_instance = async_playwright()
+    pw = await _pw_instance.start()
+    _shared_browser = await pw.chromium.launch(headless=headless)
+    return _shared_browser
+
+
+async def close_shared_browser() -> None:
+    """Close the shared browser instance."""
+    global _shared_browser, _pw_instance
+    if _shared_browser:
+        try:
+            await _shared_browser.close()
+        except Exception:
+            pass
+        _shared_browser = None
+    if _pw_instance:
+        try:
+            await _pw_instance.stop()
+        except Exception:
+            pass
+        _pw_instance = None
+
+
 class PlaywrightCrawlerPlugin(CrawlPlugin):
     """Crawl SPA applications using Playwright for JavaScript rendering."""
 
@@ -98,7 +130,6 @@ class PlaywrightCrawlerPlugin(CrawlPlugin):
             "wait_for_load": "networkidle",
             "javascript_enabled": True,
         }
-        self._browser: Any = None
 
     async def crawl(self, freq: Any, http: HttpEngine) -> list[Any]:
         from xfweb.core.data.url.fuzzable_request import FuzzableRequest
@@ -109,58 +140,63 @@ class PlaywrightCrawlerPlugin(CrawlPlugin):
         if not _check_playwright_driver():
             return []
 
-        from playwright.async_api import async_playwright
-
         try:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=self.options.get("headless", True))
+            browser = await _get_shared_browser(self.options.get("headless", True))
+            page = await browser.new_page()
 
-                page = await browser.new_page()
+            api_requests: list[str] = []
+            page.on("request", lambda req: self._on_request(req, api_requests))
 
-                page.on("request", lambda req: self._on_request(req, discovered))
+            try:
+                await page.goto(
+                    freq.url.raw_url,
+                    wait_until=self.options.get("wait_for_load", "networkidle"),
+                    timeout=self.options.get("timeout", 30000),
+                )
 
-                try:
-                    await page.goto(
-                        freq.url.raw_url,
-                        wait_until=self.options.get("wait_for_load", "networkidle"),
-                        timeout=self.options.get("timeout", 30000),
-                    )
+                links = await self._extract_rendered_links(page)
+                for link in links:
+                    full_url = urljoin(freq.url.raw_url, link)
+                    try:
+                        parsed = parse_url(full_url)
+                        discovered.append(FuzzableRequest.from_url(parsed))
+                    except Exception:
+                        pass
 
-                    links = await self._extract_rendered_links(page)
-                    for link in links:
-                        full_url = urljoin(freq.url.raw_url, link)
-                        try:
-                            parsed = parse_url(full_url)
-                            discovered.append(FuzzableRequest.from_url(parsed))
-                        except Exception:
-                            pass
+                js_routes = await self._extract_js_routes(page)
+                for route in js_routes:
+                    full_url = urljoin(freq.url.raw_url, route)
+                    try:
+                        parsed = parse_url(full_url)
+                        discovered.append(FuzzableRequest.from_url(parsed))
+                    except Exception:
+                        pass
 
-                    js_routes = await self._extract_js_routes(page)
-                    for route in js_routes:
-                        full_url = urljoin(freq.url.raw_url, route)
-                        try:
-                            parsed = parse_url(full_url)
-                            discovered.append(FuzzableRequest.from_url(parsed))
-                        except Exception:
-                            pass
+                forms = await self._extract_forms(page)
+                for form_action, method, data in forms:
+                    full_url = urljoin(freq.url.raw_url, form_action)
+                    try:
+                        parsed = parse_url(full_url)
+                        discovered.append(FuzzableRequest.from_parts(
+                            url=parsed,
+                            method=method,
+                            post_data=data if method == "POST" else None,
+                        ))
+                    except Exception:
+                        pass
 
-                    forms = await self._extract_forms(page)
-                    for form_action, method, data in forms:
-                        full_url = urljoin(freq.url.raw_url, form_action)
-                        try:
-                            parsed = parse_url(full_url)
-                            discovered.append(FuzzableRequest.from_parts(
-                                url=parsed,
-                                method=method,
-                                post_data=data if method == "POST" else None,
-                            ))
-                        except Exception:
-                            pass
+                # Add intercepted API requests
+                for api_url in api_requests:
+                    try:
+                        parsed = parse_url(api_url)
+                        discovered.append(FuzzableRequest.from_url(parsed))
+                    except Exception:
+                        pass
 
-                except Exception as exc:
-                    logger.warning("xfweb.playwright.error", url=freq.url.raw_url, error=str(exc))
-                finally:
-                    await browser.close()
+            except Exception as exc:
+                logger.warning("xfweb.playwright.error", url=freq.url.raw_url, error=str(exc))
+            finally:
+                await page.close()
 
         except Exception as exc:
             logger.warning(
@@ -265,9 +301,4 @@ class PlaywrightCrawlerPlugin(CrawlPlugin):
         parsed = urlparse(url)
         if parsed.scheme in ("http", "https"):
             if "/api/" in parsed.path or "/v1/" in parsed.path or "/v2/" in parsed.path or "/graphql" in parsed.path:
-                try:
-                    from xfweb.core.data.url.fuzzable_request import FuzzableRequest
-                    from xfweb.core.data.url import parse_url
-                    discovered.append(FuzzableRequest.from_url(parse_url(url)))
-                except Exception:
-                    pass
+                discovered.append(url)

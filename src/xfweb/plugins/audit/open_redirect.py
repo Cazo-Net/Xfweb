@@ -15,6 +15,7 @@ import structlog
 
 from xfweb.core.plugins.plugin_base import AuditPlugin
 from xfweb.core.net.http_engine import HttpEngine
+from xfweb.core.data.parsers.param_extractor import extract_params
 
 logger = structlog.get_logger()
 
@@ -56,20 +57,8 @@ class OpenRedirectPlugin(AuditPlugin):
         await self._test_url_params(freq, http)
 
     def _extract_params(self, freq: Any) -> dict[str, str]:
-        params: dict[str, str] = {}
-        if freq.url.query:
-            for pair in freq.url.query.split("&"):
-                if "=" in pair:
-                    k, v = pair.split("=", 1)
-                    if k.lower() in REDIRECT_PARAMS:
-                        params[k] = v
-        if freq.post_data and isinstance(freq.post_data, str):
-            for pair in freq.post_data.split("&"):
-                if "=" in pair:
-                    k, v = pair.split("=", 1)
-                    if k.lower() in REDIRECT_PARAMS:
-                        params[k] = v
-        return params
+        all_params = extract_params(freq)
+        return {k: v for k, v in all_params.items() if k.lower() in REDIRECT_PARAMS}
 
     async def _test_url_params(self, freq: Any, http: HttpEngine) -> None:
         if not freq.url.query:

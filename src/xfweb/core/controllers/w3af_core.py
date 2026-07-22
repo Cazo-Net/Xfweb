@@ -7,7 +7,6 @@ knowledge base, and worker pools to execute scans against web targets.
 from __future__ import annotations
 
 import asyncio
-import signal
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -50,11 +49,17 @@ class ScanConfig:
     max_redirect_depth: int = 5
     user_agent: str = f"Xfweb/{__version__}"
     extra_headers: dict[str, str] = field(default_factory=dict)
+    extra_cookies: dict[str, str] = field(default_factory=dict)
     proxy: str | None = None
     scope: list[str] = field(default_factory=list)
     exclude_scope: list[str] = field(default_factory=list)
     output_dir: Path = Path("xfweb_output")
     enable_ai: bool = False
+    login_url: str = ""
+    login_data: dict[str, str] = field(default_factory=dict)
+    login_username_field: str = "username"
+    login_password_field: str = "password"
+    auth_token: str = ""
 
 
 class XfwebCore:
@@ -72,6 +77,8 @@ class XfwebCore:
             user_agent=config.user_agent,
             rate_limit=config.rate_limit,
             proxy=config.proxy,
+            extra_headers=config.extra_headers,
+            extra_cookies=config.extra_cookies,
         )
         self.strategy = ScanStrategy(core=self)
 
@@ -106,6 +113,19 @@ class XfwebCore:
 
         try:
             await self._verify_target()
+
+            # Load profile if specified
+            if self.config.profile:
+                self._load_profile(self.config.profile)
+
+            # Apply auth token if provided
+            if self.config.auth_token:
+                self.http.set_headers({"Authorization": f"Bearer {self.config.auth_token}"})
+
+            # Perform login if credentials provided
+            if self.config.login_url and self.config.login_data:
+                await self._perform_login()
+
             self.plugins.load_plugins(
                 include=self.config.plugins,
                 exclude=self.config.exclude_plugins,
@@ -139,6 +159,60 @@ class XfwebCore:
         self.state = ScanState.STOPPING
         self._shutdown_event.set()
         await self._emit_event("scan_stopping")
+
+    async def _perform_login(self) -> None:
+        """Perform login using configured credentials."""
+        logger.info("xfweb.scan.login", url=self.config.login_url)
+        try:
+            resp = await self.http.post(
+                self.config.login_url,
+                data=self.config.login_data,
+            )
+            if resp.status_code in (200, 302):
+                logger.info("xfweb.scan.login_success", status=resp.status_code)
+            else:
+                logger.warning(
+                    "xfweb.scan.login_failed",
+                    status=resp.status_code,
+                    url=self.config.login_url,
+                )
+        except Exception as exc:
+            logger.warning("xfweb.scan.login_error", error=str(exc))
+
+    def _load_profile(self, profile_name: str) -> None:
+        """Load a scan profile from YAML files."""
+        import yaml
+        profiles_dir = Path(__file__).parent.parent.parent.parent / "profiles"
+        profile_file = profiles_dir / f"{profile_name}.yaml"
+
+        if not profile_file.exists():
+            # Try relative to the package
+            profiles_dir = Path("profiles")
+            profile_file = profiles_dir / f"{profile_name}.yaml"
+
+        if profile_file.exists():
+            try:
+                with open(profile_file) as f:
+                    profile = yaml.safe_load(f)
+                if profile:
+                    if "plugins" in profile:
+                        if profile["plugins"].get("include"):
+                            self.config.plugins = profile["plugins"]["include"]
+                        if profile["plugins"].get("exclude"):
+                            self.config.exclude_plugins = profile["plugins"]["exclude"]
+                    if "scan" in profile:
+                        scan_config = profile["scan"]
+                        if "max_threads" in scan_config:
+                            self.config.max_threads = scan_config["max_threads"]
+                        if "max_scan_time" in scan_config:
+                            self.config.max_scan_time = scan_config["max_scan_time"]
+                        if "rate_limit" in scan_config:
+                            self.config.rate_limit = scan_config["rate_limit"]
+                    logger.info("xfweb.profile.loaded", name=profile_name)
+            except Exception as exc:
+                logger.warning("xfweb.profile.load_error", name=profile_name, error=str(exc))
+        else:
+            logger.warning("xfweb.profile.not_found", name=profile_name)
 
     async def _verify_target(self) -> None:
         """Verify the target is reachable before scanning."""
