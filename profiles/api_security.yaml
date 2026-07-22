@@ -1,0 +1,53 @@
+# Xfweb API Security Profile
+# Focused on REST, GraphQL, and WebSocket API testing
+
+scan:
+  discovery_timeout: 3600
+  scan_timeout: 7200
+  max_threads: 30
+
+plugins:
+  crawl:
+    - web_spider
+    - open_api
+    - robots_txt
+
+  audit:
+    - sqli
+    - xss
+    - ssrf
+    - lfi
+    - os_commanding
+    - eval
+
+  grep:
+    - csp
+    - password_profiling
+
+  infrastructure:
+    - server_header
+    - fingerprint_waf
+
+  graphql:
+    - graphql_introspection
+    - graphql_batching
+    - graphql_depth
+
+  websocket:
+    - websocket_hijacking
+
+  api: []
+
+  auth:
+    - oauth2_auth
+    - jwt_attacks
+
+  output:
+    - sarif_output
+    - json_output
+
+  evasion: []
+  bruteforce: []
+  attack: []
+  mangle: []
+  ai: []

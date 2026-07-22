@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Xfweb - The Beast</title>
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --border: #30363d;
+            --text-primary: #c9d1d9;
+            --text-secondary: #8b949e;
+            --accent: #ff4444;
+            --accent-dim: #ff444422;
+            --green: #3fb950;
+            --yellow: #d29922;
+            --orange: #db6d28;
+            --red: #ff4444;
+            --blue: #58a6ff;
+            --purple: #bc8cff;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        .header {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            padding: 16px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .header h1 {
+            font-size: 20px;
+            color: var(--accent);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .header h1 span { font-size: 12px; color: var(--text-secondary); font-weight: normal; }
+
+        .header .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--green);
+        }
+
+        .status-dot.running { background: var(--yellow); animation: pulse 1s infinite; }
+        .status-dot.stopped { background: var(--text-secondary); }
+
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+
+        .scan-form {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+
+        .scan-form h2 { font-size: 16px; margin-bottom: 16px; color: var(--accent); }
+
+        .form-row { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+
+        .form-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 200px; }
+
+        .form-group label { font-size: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; }
+
+        .form-group input, .form-group select {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 12px;
+            color: var(--text-primary);
+            font-size: 14px;
+            outline: none;
+        }
+
+        .form-group input:focus, .form-group select:focus { border-color: var(--accent); }
+
+        .btn {
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 10px 24px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .btn:hover { background: #cc3636; }
+        .btn:disabled { background: var(--text-secondary); cursor: not-allowed; }
+
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover { background: var(--border); }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px 20px;
+        }
+
+        .stat-card .value { font-size: 28px; font-weight: 700; }
+        .stat-card .label { font-size: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
+        .stat-card.critical .value { color: var(--red); }
+        .stat-card.high .value { color: var(--orange); }
+        .stat-card.medium .value { color: var(--yellow); }
+        .stat-card.low .value { color: var(--green); }
+
+        .panel {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 24px;
+        }
+
+        .panel-header {
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border);
+            font-size: 14px;
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .panel-body { padding: 0; }
+
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px 16px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px; }
+        th { color: var(--text-secondary); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: var(--bg-tertiary); }
+
+        .severity { padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+        .severity.critical { background: #ff444422; color: var(--red); }
+        .severity.high { background: #db6d2822; color: var(--orange); }
+        .severity.medium { background: #d2992222; color: var(--yellow); }
+        .severity.low { background: #3fb95022; color: var(--green); }
+        .severity.information { background: #58a6ff22; color: var(--blue); }
+
+        .log-panel {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+            font-size: 12px;
+            line-height: 1.8;
+        }
+
+        .log-entry { color: var(--text-secondary); }
+        .log-entry .time { color: var(--text-secondary); }
+        .log-entry .info { color: var(--blue); }
+        .log-entry .warn { color: var(--yellow); }
+        .log-entry .error { color: var(--red); }
+
+        .empty-state { text-align: center; padding: 48px 24px; color: var(--text-secondary); }
+        .empty-state h3 { font-size: 18px; margin-bottom: 8px; color: var(--text-primary); }
+
+        .plugins-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 8px;
+            padding: 16px;
+        }
+
+        .plugin-tag {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .plugin-tag .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+
+        .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+        @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Xfweb <span>The Beast v1.0.0</span></h1>
+        <div class="status">
+            <div class="status-dot" id="statusDot"></div>
+            <span id="statusText">Ready</span>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Scan Form -->
+        <div class="scan-form">
+            <h2>New Scan</h2>
+            <div class="form-row">
+                <div class="form-group" style="flex: 3;">
+                    <label>Target URL</label>
+                    <input type="text" id="targetUrl" placeholder="https://example.com" />
+                </div>
+                <div class="form-group">
+                    <label>Profile</label>
+                    <select id="scanProfile">
+                        <option value="">Custom</option>
+                        <option value="full_audit">Full Audit</option>
+                        <option value="fast_scan">Fast Scan</option>
+                        <option value="owasp_top10">OWASP Top 10</option>
+                        <option value="api_security">API Security</option>
+                        <option value="auth_test">Auth Testing</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Plugins</label>
+                    <input type="text" id="pluginFilter" placeholder="sqli,xss,csrf (optional)" />
+                </div>
+            </div>
+            <div class="form-row" style="justify-content: space-between;">
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <label style="font-size: 13px; display: flex; align-items: center; gap: 6px;">
+                        <input type="checkbox" id="enableAi" /> Enable AI
+                    </label>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn" id="startBtn" onclick="startScan()">Start Scan</button>
+                    <button class="btn btn-secondary" id="stopBtn" onclick="stopScan()" style="display:none;">Stop</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stats Grid -->
+        <div class="stats-grid" id="statsGrid" style="display:none;">
+            <div class="stat-card"><div class="value" id="statTotal">0</div><div class="label">Total Findings</div></div>
+            <div class="stat-card critical"><div class="value" id="statCritical">0</div><div class="label">Critical</div></div>
+            <div class="stat-card high"><div class="value" id="statHigh">0</div><div class="label">High</div></div>
+            <div class="stat-card medium"><div class="value" id="statMedium">0</div><div class="label">Medium</div></div>
+            <div class="stat-card low"><div class="value" id="statLow">0</div><div class="label">Low / Info</div></div>
+        </div>
+
+        <!-- Results + Log -->
+        <div class="two-col">
+            <div class="panel">
+                <div class="panel-header">
+                    <span>Findings</span>
+                    <span id="findingCount" style="color: var(--text-secondary); font-size: 12px;"></span>
+                </div>
+                <div class="panel-body">
+                    <table id="findingsTable">
+                        <thead>
+                            <tr><th>Severity</th><th>Finding</th><th>URL</th><th>Plugin</th></tr>
+                        </thead>
+                        <tbody id="findingsBody"></tbody>
+                    </table>
+                    <div class="empty-state" id="emptyFindings">
+                        <h3>No findings yet</h3>
+                        <p>Start a scan to see results here</p>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <div class="panel">
+                    <div class="panel-header"><span>Live Log</span></div>
+                    <div class="panel-body">
+                        <div class="log-panel" id="logPanel">
+                            <div class="log-entry"><span class="info">Xfweb ready. Enter a target and start scanning.</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header"><span>Loaded Plugins</span><span id="pluginCount" style="color: var(--text-secondary); font-size: 12px;"></span></div>
+                    <div class="panel-body">
+                        <div class="plugins-grid" id="pluginsGrid"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentScanId = null;
+        let ws = null;
+        let findings = [];
+
+        function addLog(msg, level = 'info') {
+            const panel = document.getElementById('logPanel');
+            const time = new Date().toLocaleTimeString();
+            panel.innerHTML += `<div class="log-entry"><span class="time">[${time}]</span> <span class="${level}">${msg}</span></div>`;
+            panel.scrollTop = panel.scrollHeight;
+        }
+
+        function setStatus(state, text) {
+            const dot = document.getElementById('statusDot');
+            const txt = document.getElementById('statusText');
+            dot.className = 'status-dot ' + state;
+            txt.textContent = text;
+        }
+
+        async function startScan() {
+            const target = document.getElementById('targetUrl').value.trim();
+            if (!target) { alert('Enter a target URL'); return; }
+
+            const plugins = document.getElementById('pluginFilter').value.trim();
+            const enableAi = document.getElementById('enableAi').checked;
+
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').style.display = 'inline-block';
+            document.getElementById('statsGrid').style.display = 'grid';
+            document.getElementById('emptyFindings').style.display = 'none';
+            setStatus('running', 'Scanning...');
+            addLog(`Starting scan against ${target}`, 'info');
+
+            try {
+                const resp = await fetch('/api/v1/scan', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        target: target,
+                        plugins: plugins ? plugins.split(',').map(p => p.trim()) : null,
+                        enable_ai: enableAi,
+                    })
+                });
+                const data = await resp.json();
+                currentScanId = data.scan_id;
+                addLog(`Scan started: ${data.scan_id}`, 'info');
+                connectWebSocket(data.scan_id);
+            } catch (err) {
+                addLog(`Error: ${err.message}`, 'error');
+                setStatus('stopped', 'Error');
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('stopBtn').style.display = 'none';
+            }
+        }
+
+        async function stopScan() {
+            if (!currentScanId) return;
+            try {
+                await fetch(`/api/v1/scan/${currentScanId}`, { method: 'DELETE' });
+                addLog('Scan stopped', 'warn');
+                setStatus('stopped', 'Stopped');
+                if (ws) ws.close();
+            } catch (err) {
+                addLog(`Error stopping: ${err.message}`, 'error');
+            }
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').style.display = 'none';
+        }
+
+        function connectWebSocket(scanId) {
+            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+            ws = new WebSocket(`${proto}://${location.host}/ws/scan/${scanId}`);
+
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                if (msg.event === 'scan_complete') {
+                    addLog('Scan completed!', 'info');
+                    setStatus('', 'Completed');
+                    document.getElementById('startBtn').disabled = false;
+                    document.getElementById('stopBtn').style.display = 'none';
+                    loadResults(scanId);
+                } else if (msg.event === 'scan_error') {
+                    addLog(`Error: ${msg.data?.error}`, 'error');
+                    setStatus('stopped', 'Error');
+                } else if (msg.event === 'scan_start') {
+                    addLog(`Scanning: ${msg.data?.target}`, 'info');
+                } else if (msg.event === 'scan_running') {
+                    addLog('Scan pipeline active', 'info');
+                }
+            };
+
+            ws.onclose = () => {
+                if (document.getElementById('stopBtn').style.display !== 'none') {
+                    loadResults(scanId);
+                }
+            };
+
+            ws.onerror = () => addLog('WebSocket error', 'error');
+        }
+
+        async function loadResults(scanId) {
+            try {
+                const resp = await fetch(`/api/v1/scan/${scanId}/findings`);
+                findings = await resp.json();
+                renderFindings();
+                updateStats();
+            } catch (err) {
+                addLog(`Failed to load results: ${err.message}`, 'error');
+            }
+        }
+
+        function renderFindings() {
+            const tbody = document.getElementById('findingsBody');
+            if (!findings.length) {
+                document.getElementById('emptyFindings').style.display = 'block';
+                tbody.innerHTML = '';
+                return;
+            }
+            document.getElementById('emptyFindings').style.display = 'none';
+            document.getElementById('findingCount').textContent = `${findings.length} finding(s)`;
+
+            tbody.innerHTML = findings.map(f => `
+                <tr>
+                    <td><span class="severity ${f.severity}">${f.severity}</span></td>
+                    <td>${f.name || 'Unknown'}</td>
+                    <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${f.url || '-'}</td>
+                    <td>${f.plugin_name || '-'}</td>
+                </tr>
+            `).join('');
+        }
+
+        function updateStats() {
+            const counts = { critical: 0, high: 0, medium: 0, low: 0, information: 0 };
+            findings.forEach(f => { counts[f.severity] = (counts[f.severity] || 0) + 1; });
+
+            document.getElementById('statTotal').textContent = findings.length;
+            document.getElementById('statCritical').textContent = counts.critical;
+            document.getElementById('statHigh').textContent = counts.high;
+            document.getElementById('statMedium').textContent = counts.medium;
+            document.getElementById('statLow').textContent = counts.low + counts.information;
+        }
+
+        async function loadPlugins() {
+            try {
+                const resp = await fetch('/api/v1/plugins');
+                const data = await resp.json();
+                const grid = document.getElementById('pluginsGrid');
+                let total = 0;
+                let html = '';
+                for (const [cat, plugins] of Object.entries(data)) {
+                    plugins.forEach(p => {
+                        html += `<div class="plugin-tag"><div class="dot"></div>${p} <span style="color:var(--text-secondary);font-size:10px;">(${cat})</span></div>`;
+                        total++;
+                    });
+                }
+                grid.innerHTML = html || '<div style="padding:16px;color:var(--text-secondary);">No plugins loaded</div>';
+                document.getElementById('pluginCount').textContent = `${total} plugin(s)`;
+            } catch (err) {
+                addLog('Failed to load plugins', 'warn');
+            }
+        }
+
+        loadPlugins();
+    </script>
+</body>
+</html>

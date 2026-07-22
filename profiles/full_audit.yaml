@@ -1,0 +1,74 @@
+# Xfweb Full Audit Profile
+# Comprehensive scan with all available plugins
+
+scan:
+  discovery_timeout: 7200
+  scan_timeout: 14400
+  max_threads: 30
+  rate_limit: 0
+
+plugins:
+  crawl:
+    - web_spider
+    - robots_txt
+    - sitemap_xml
+    - open_api
+    - dir_file_bruter
+    - dir_listing
+    - phpinfo
+
+  audit:
+    - sqli
+    - xss
+    - csrf
+    - lfi
+    - rfi
+    - os_commanding
+    - eval
+    - xxe
+    - ssrf
+    - file_upload
+    - response_splitting
+    - ssl_certificate
+
+  grep:
+    - click_jacking
+    - csp
+    - credit_cards
+    - get_emails
+    - html_comments
+    - private_ip
+    - password_profiling
+    - retirejs
+
+  infrastructure:
+    - server_header
+    - fingerprint_os
+    - fingerprint_waf
+    - allowed_methods
+    - find_vhosts
+
+  graphql:
+    - graphql_introspection
+    - graphql_batching
+    - graphql_depth
+
+  websocket:
+    - websocket_hijacking
+
+  auth:
+    - oauth2_auth
+    - jwt_attacks
+
+  evasion:
+    - rnd_case
+    - rnd_hex_encode
+    - x_forwarded_for
+
+  output:
+    - sarif_output
+
+  bruteforce: []
+
+  attack: []
+  mangle: []

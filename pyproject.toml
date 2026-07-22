@@ -1,0 +1,190 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "xfweb"
+version = "1.0.0"
+description = "Xfweb - The Beast: Next-gen web application security scanner with AI-powered detection, modern auth testing, and full API coverage"
+readme = "README.md"
+license = { text = "GPL-2.0-or-later" }
+requires-python = ">=3.11"
+authors = [
+    { name = "Xfweb Contributors" },
+]
+keywords = [
+    "security",
+    "web",
+    "vulnerability",
+    "scanner",
+    "dast",
+    "penetration-testing",
+    "api-security",
+    "graphql",
+    "owasp",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+]
+dependencies = [
+    "httpx[http2]>=0.27,<1",
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.30,<1",
+    "pydantic>=2.9,<3",
+    "pydantic-settings>=2.5,<3",
+    "playwright>=1.49,<2",
+    "structlog>=24.4,<25",
+    "pyyaml>=6.0,<7",
+    "cryptography>=44.0,<45",
+    "rich>=13.9,<14",
+    "click>=8.1,<9",
+    "sqlalchemy[asyncio]>=2.0,<3",
+    "aiosqlite>=0.20,<1",
+    "jinja2>=3.1,<4",
+    "msgpack>=1.1,<2",
+    "tldextract>=5.1,<6",
+    "token-bucket>=0.3,<1",
+    "certifi>=2024.8",
+    "h2>=4.1,<5",
+    "websockets>=14.0,<15",
+    "grpcio>=1.68,<2",
+    "protobuf>=5.28,<6",
+]
+
+[project.optional-dependencies]
+grpc = [
+    "grpcio-tools>=1.68,<2",
+]
+ai = [
+    "openai>=1.58,<2",
+    "anthropic>=0.40,<1",
+    "numpy>=2.0,<3",
+]
+dev = [
+    "pytest>=8.3,<9",
+    "pytest-asyncio>=0.24,<1",
+    "pytest-cov>=6.0,<7",
+    "ruff>=0.8,<1",
+    "black>=24.10,<25",
+    "mypy>=1.13,<2",
+    "pre-commit>=4.0,<5",
+    "httpx>=0.27,<1",
+    "respx>=0.22,<1",
+]
+all = [
+    "xfweb[ai,dev,grpc]",
+]
+
+[project.scripts]
+xfweb = "xfweb.cli.main:cli"
+xfweb-api = "xfweb.core.ui.api.main:run_server"
+
+[project.entry-points."xfweb.plugins"]
+audit = "xfweb.plugins.audit"
+crawl = "xfweb.plugins.crawl"
+grep = "xfweb.plugins.grep"
+infrastructure = "xfweb.plugins.infrastructure"
+evasion = "xfweb.plugins.evasion"
+output = "xfweb.plugins.output"
+attack = "xfweb.plugins.attack"
+bruteforce = "xfweb.plugins.bruteforce"
+auth = "xfweb.plugins.auth"
+mangle = "xfweb.plugins.mangle"
+ai = "xfweb.plugins.ai"
+websocket = "xfweb.plugins.websocket"
+graphql = "xfweb.plugins.graphql"
+grpc = "xfweb.plugins.grpc"
+api = "xfweb.plugins.api"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/xfweb"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "A",    # flake8-builtins
+    "C4",   # flake8-comprehensions
+    "DTZ",  # flake8-datetimez
+    "T20",  # flake8-print
+    "RET",  # flake8-return
+    "SIM",  # flake8-simplify
+    "TCH",  # flake8-type-checking
+    "ARG",  # flake8-unused-arguments
+    "PTH",  # flake8-use-pathlib
+    "ERA",  # flake8-eradicate
+    "PD",   # flake8-pandas
+    "PGH",  # pygrep-hooks
+    "RUF",  # ruff-specific
+    "S",    # flake8-bandit
+    "FBT",  # flake8-boolean-trap
+]
+ignore = [
+    "E501",   # line too long (handled by black)
+    "T201",   # print found (allowed in CLI)
+    "S101",   # assert used (allowed in tests)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "ARG"]
+"src/xfweb/cli/**" = ["T201"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["xfweb"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks integration tests",
+]
+
+[tool.coverage.run]
+source = ["xfweb"]
+omit = ["tests/*", "xfweb/core/ui/dashboard/*"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80

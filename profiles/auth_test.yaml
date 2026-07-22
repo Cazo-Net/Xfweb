@@ -1,0 +1,45 @@
+# Xfweb Auth Testing Profile
+# Focused on authentication and authorization testing
+
+scan:
+  discovery_timeout: 1800
+  scan_timeout: 3600
+  max_threads: 20
+
+plugins:
+  crawl:
+    - web_spider
+    - open_api
+
+  audit:
+    - sqli
+    - xss
+    - csrf
+
+  grep:
+    - password_profiling
+    - csp
+
+  infrastructure:
+    - server_header
+
+  auth:
+    - oauth2_auth
+    - jwt_attacks
+
+  graphql:
+    - graphql_introspection
+
+  websocket:
+    - websocket_hijacking
+
+  output:
+    - json_output
+    - html_output
+
+  evasion: []
+  bruteforce: []
+  attack: []
+  mangle: []
+  api: []
+  ai: []

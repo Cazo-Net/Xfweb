@@ -1,0 +1,36 @@
+# Xfweb Fast Scan Profile
+# Quick scan — only the most critical checks
+
+scan:
+  discovery_timeout: 1800
+  scan_timeout: 3600
+  max_threads: 50
+
+plugins:
+  crawl:
+    - web_spider
+    - robots_txt
+
+  audit:
+    - sqli
+    - xss
+
+  grep:
+    - csp
+    - password_profiling
+
+  infrastructure:
+    - server_header
+
+  output:
+    - json_output
+
+  evasion: []
+  auth: []
+  bruteforce: []
+  attack: []
+  mangle: []
+  graphql: []
+  websocket: []
+  api: []
+  ai: []
