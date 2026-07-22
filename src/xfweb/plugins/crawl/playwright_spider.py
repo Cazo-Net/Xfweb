@@ -65,9 +65,18 @@ def _check_playwright_driver() -> bool:
         await obj.stop()
 
     try:
-        asyncio.get_event_loop().run_until_complete(
-            asyncio.wait_for(_test(), timeout=15.0)
-        )
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(asyncio.run, asyncio.wait_for(_test(), timeout=15.0))
+                future.result(timeout=20)
+        else:
+            asyncio.run(asyncio.wait_for(_test(), timeout=15.0))
         _playwright_ok = True
         return True
     except Exception as exc:

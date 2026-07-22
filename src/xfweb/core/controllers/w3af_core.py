@@ -60,6 +60,7 @@ class ScanConfig:
     login_username_field: str = "username"
     login_password_field: str = "password"
     auth_token: str = ""
+    max_page_size: int = 0  # max response body bytes, 0 = unlimited
 
 
 class XfwebCore:
@@ -79,6 +80,7 @@ class XfwebCore:
             proxy=config.proxy,
             extra_headers=config.extra_headers,
             extra_cookies=config.extra_cookies,
+            max_response_size=config.max_page_size,
         )
         self.strategy = ScanStrategy(core=self)
 

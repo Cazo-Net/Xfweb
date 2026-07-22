@@ -30,6 +30,7 @@ class ScanStrategy:
         self._discovery_start: float = 0.0
         self._target_domain: str = ""
         self._target_subdomains: set[str] = set()
+        self._excluded_domains: set[str] = set()
 
     async def run(self) -> None:
         """Execute the full scan pipeline."""
@@ -51,8 +52,9 @@ class ScanStrategy:
         # Add any explicitly provided scope domains
         for s in self.core.config.scope:
             self._target_subdomains.add(s)
-        # Remove any explicitly excluded domains
+        # Track excluded domains
         for s in self.core.config.exclude_scope:
+            self._excluded_domains.add(s)
             self._target_subdomains.discard(s)
 
         for req in seed_requests:
@@ -110,8 +112,22 @@ class ScanStrategy:
             host = parsed.hostname or ""
             if not host:
                 return False
-            # Exact match or subdomain of target
-            return host == self._target_domain or host in self._target_subdomains
+
+            # Check exclusions first
+            for excluded in self._excluded_domains:
+                if host == excluded or host.endswith(f".{excluded}"):
+                    return False
+
+            # Exact match
+            if host == self._target_domain:
+                return True
+            # Subdomain check: host ends with .target_domain
+            if host.endswith(f".{self._target_domain}"):
+                return True
+            # Explicit scope match
+            if host in self._target_subdomains:
+                return True
+            return False
         except Exception:
             return False
 

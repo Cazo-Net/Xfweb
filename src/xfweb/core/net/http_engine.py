@@ -113,6 +113,7 @@ class HttpEngine:
         retry_delay: float = 0.5,
         extra_headers: dict[str, str] | None = None,
         extra_cookies: dict[str, str] | None = None,
+        max_response_size: int = 0,
     ) -> None:
         self.user_agent = user_agent
         self.rate_limit = rate_limit
@@ -125,6 +126,7 @@ class HttpEngine:
         self._extra_cookies = extra_cookies or {}
         self._client: httpx.AsyncClient | None = None
         self._rate_limiter: RateLimiter | None = None
+        self._max_response_size = max_response_size
 
         self.request_count: int = 0
         self.error_count: int = 0
@@ -225,6 +227,13 @@ class HttpEngine:
                 for name, value in response.cookies.items():
                     self._extra_cookies[name] = value
 
+                # Truncate large responses to prevent OOM
+                body = response.content
+                text = response.text
+                if self._max_response_size > 0 and len(body) > self._max_response_size:
+                    body = body[: self._max_response_size]
+                    text = text[: self._max_response_size]
+
                 logger.debug(
                     "xfweb.http.request",
                     method=method,
@@ -237,8 +246,8 @@ class HttpEngine:
                 return HttpResponse(
                     status_code=response.status_code,
                     headers=dict(response.headers),
-                    body=response.content,
-                    text=response.text,
+                    body=body,
+                    text=text,
                     url=str(response.url),
                     history=[str(r.url) for r in response.history],
                     elapsed_ms=elapsed,

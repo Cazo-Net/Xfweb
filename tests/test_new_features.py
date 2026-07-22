@@ -120,3 +120,114 @@ class TestSessionManagement:
         assert config.extra_headers["X-Custom"] == "val"
         assert config.login_url == "https://example.com/login"
         assert config.login_data["user"] == "admin"
+
+
+# ── Strategy scope validation ────────────────────────────────────────────
+
+
+class TestStrategyScope:
+    def _make_strategy(self, target: str, scope: list[str] | None = None, exclude: list[str] | None = None):
+        from xfweb.core.controllers.w3af_core import XfwebCore, ScanConfig
+        from xfweb.core.controllers.strategy import ScanStrategy
+
+        config = ScanConfig(target=target, scope=scope or [], exclude_scope=exclude or [])
+        core = XfwebCore(config)
+        strategy = ScanStrategy(core)
+        # Simulate what run() does to init scope
+        from urllib.parse import urlparse
+        parsed = urlparse(target)
+        strategy._target_domain = parsed.hostname or ""
+        parts = strategy._target_domain.split(".")
+        for i in range(len(parts)):
+            strategy._target_subdomains.add(".".join(parts[i:]))
+        for s in config.scope:
+            strategy._target_subdomains.add(s)
+        for s in config.exclude_scope:
+            strategy._excluded_domains.add(s)
+            strategy._target_subdomains.discard(s)
+        return strategy
+
+    def test_in_scope_same_domain(self):
+        s = self._make_strategy("https://example.com")
+        assert s._is_in_scope("https://example.com/page")
+
+    def test_in_scope_subdomain(self):
+        s = self._make_strategy("https://example.com")
+        assert s._is_in_scope("https://api.example.com/data")
+
+    def test_out_of_scope(self):
+        s = self._make_strategy("https://example.com")
+        assert not s._is_in_scope("https://evil.com/steal")
+
+    def test_out_of_scope_subdomain(self):
+        s = self._make_strategy("https://example.com")
+        assert not s._is_in_scope("https://notexample.com/page")
+
+    def test_explicit_scope_adds_domain(self):
+        s = self._make_strategy("https://example.com", scope=["api.other.com"])
+        assert s._is_in_scope("https://api.other.com/v1")
+
+    def test_exclude_scope_removes_domain(self):
+        s = self._make_strategy("https://example.com", exclude=["staging.example.com"])
+        assert not s._is_in_scope("https://staging.example.com")
+
+
+# ── Finding body truncation ──────────────────────────────────────────────
+
+
+class TestFindingTruncation:
+    def test_truncates_long_evidence(self):
+        kb = KnowledgeBase(max_responses=0)
+        long_evidence = "x" * 5000
+        finding = Finding(
+            name="test",
+            severity=Severity.LOW,
+            description="test",
+            url="https://example.com",
+            evidence=long_evidence,
+        )
+        kb.append("loc", finding)
+        d = kb.to_dicts()[0]
+        assert len(d["evidence"]) <= 2048
+
+    def test_truncates_long_body_excerpt(self):
+        kb = KnowledgeBase(max_responses=0)
+        finding = Finding(
+            name="test",
+            severity=Severity.LOW,
+            description="test",
+            url="https://example.com",
+            http_response={"body_excerpt": "y" * 5000},
+        )
+        kb.append("loc", finding)
+        d = kb.to_dicts()[0]
+        body = d["http_response"]["body_excerpt"]
+        assert len(body) <= 2048 + 20  # MAX_BODY_LEN + truncation suffix len
+
+    def test_short_evidence_not_truncated(self):
+        kb = KnowledgeBase(max_responses=0)
+        finding = Finding(
+            name="test",
+            severity=Severity.LOW,
+            description="test",
+            url="https://example.com",
+            evidence="short evidence",
+        )
+        kb.append("loc", finding)
+        d = kb.to_dicts()[0]
+        assert d["evidence"] == "short evidence"
+
+
+# ── Max page size config ────────────────────────────────────────────────
+
+
+class TestMaxPageSize:
+    def test_default_is_zero(self):
+        from xfweb.core.controllers.w3af_core import ScanConfig
+        config = ScanConfig(target="https://example.com")
+        assert config.max_page_size == 0
+
+    def test_custom_max_page_size(self):
+        from xfweb.core.controllers.w3af_core import ScanConfig
+        config = ScanConfig(target="https://example.com", max_page_size=1048576)
+        assert config.max_page_size == 1048576

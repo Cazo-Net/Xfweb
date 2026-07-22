@@ -32,7 +32,12 @@ class Finding:
     http_response: dict[str, Any] = field(default_factory=dict)
     remediation: str = ""
 
+    MAX_BODY_LEN = 2048
+
     def to_dict(self) -> dict[str, Any]:
+        resp = self.http_response.copy() if self.http_response else {}
+        if "body_excerpt" in resp and len(resp["body_excerpt"]) > self.MAX_BODY_LEN:
+            resp["body_excerpt"] = resp["body_excerpt"][: self.MAX_BODY_LEN] + "... [truncated]"
         return {
             "name": self.name,
             "severity": self.severity.value,
@@ -40,9 +45,9 @@ class Finding:
             "url": self.url,
             "parameter": self.parameter,
             "plugin_name": self.plugin_name,
-            "evidence": self.evidence,
+            "evidence": self.evidence[: self.MAX_BODY_LEN] if len(self.evidence) > self.MAX_BODY_LEN else self.evidence,
             "http_request": self.http_request,
-            "http_response": self.http_response,
+            "http_response": resp,
             "remediation": self.remediation,
         }
 

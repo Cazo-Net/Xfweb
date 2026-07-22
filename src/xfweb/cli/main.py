@@ -371,6 +371,7 @@ def cli() -> None:
 @click.option("--max-pages", default=500, type=int, help="Max pages to crawl")
 @click.option("--scope", multiple=True, help="Domain scope (repeatable, e.g. --scope example.com)")
 @click.option("--exclude-scope", multiple=True, help="Exclude domain from scope (repeatable)")
+@click.option("--max-page-size", default=0, type=int, help="Max response body size in bytes (0=unlimited)")
 def scan(
     target: str,
     profile: str | None,
@@ -391,6 +392,7 @@ def scan(
     max_pages: int,
     scope: tuple[str, ...],
     exclude_scope: tuple[str, ...],
+    max_page_size: int,
 ) -> None:
     """Scan a web application for vulnerabilities."""
     from xfweb.core.controllers.w3af_core import XfwebCore, ScanConfig
@@ -436,6 +438,7 @@ def scan(
         max_scan_time=max_scan_time,
         scope=list(scope) if scope else [],
         exclude_scope=list(exclude_scope) if exclude_scope else [],
+        max_page_size=max_page_size,
     )
 
     _print_target_info(target, profile, plugins, enable_ai)
