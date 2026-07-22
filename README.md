@@ -40,64 +40,181 @@ pip install "git+https://github.com/Cazo-Net/Xfweb.git[ai]"
 playwright install chromium
 ```
 
-### CLI Scan
+---
+
+## Usage
+
+### `xfweb scan` — Run a vulnerability scan
 
 ```bash
-# Basic scan
-xfweb scan --target https://example.com
+# Basic scan (all plugins)
+xfweb scan -t https://example.com
 
-# Full audit with AI
-xfweb scan --target https://example.com --profile full_audit --enable-ai
+# Scan with a profile
+xfweb scan -t https://example.com --profile full_audit
+xfweb scan -t https://example.com --profile fast_scan
+xfweb scan -t https://example.com --profile owasp_top10
+xfweb scan -t https://example.com --profile api_security
+xfweb scan -t https://example.com --profile auth_test
 
-# Specific plugins
-xfweb scan --target https://example.com --plugins sqli,xss,csrf
+# Enable specific plugins only
+xfweb scan -t https://example.com --plugins sqli,xss,csrf
 
-# With proxy
-xfweb scan --target https://example.com --proxy http://127.0.0.1:8080
+# Exclude specific plugins
+xfweb scan -t https://example.com --exclude dir_listing,robots_txt
+
+# Enable AI-powered detection
+xfweb scan -t https://example.com --enable-ai
+
+# Use a proxy (e.g. Burp Suite)
+xfweb scan -t https://example.com --proxy http://127.0.0.1:8080
+
+# Control concurrency and rate limiting
+xfweb scan -t https://example.com --max-threads 10 --rate-limit 5.0
+
+# Set output directory and format
+xfweb scan -t https://example.com -o ./results -f sarif
+xfweb scan -t https://example.com -o ./results -f json
+xfweb scan -t https://example.com -o ./results -f html
+xfweb scan -t https://example.com -o ./results -f csv
+
+# Verbose logging
+xfweb scan -t https://example.com -v
+
+# Full example
+xfweb scan -t https://example.com \
+  --profile owasp_top10 \
+  --proxy http://127.0.0.1:8080 \
+  --max-threads 20 \
+  --rate-limit 10.0 \
+  --enable-ai \
+  -o ./my_scan \
+  -f sarif \
+  -v
 ```
 
-### API Server
+**Scan options:**
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--target` | `-t` | *(required)* | Target URL to scan |
+| `--profile` | `-p` | all plugins | Scan profile name |
+| `--plugins` | `-P` | all | Comma-separated plugin names |
+| `--exclude` | `-x` | none | Comma-separated plugins to skip |
+| `--max-threads` | | 30 | Max concurrent requests |
+| `--rate-limit` | | 0.0 | Requests/sec (0 = unlimited) |
+| `--proxy` | | none | HTTP proxy URL |
+| `--output` | `-o` | `xfweb_output` | Output directory |
+| `--format` | `-f` | `json` | Output format: `json`, `sarif`, `html`, `csv` |
+| `--enable-ai` | | off | Enable AI payload generation |
+| `--verbose` | `-v` | off | Verbose logging |
+
+---
+
+### `xfweb serve` — Start the REST API server
 
 ```bash
-# Start the REST API + dashboard
-xfweb serve --port 8080
+# Start on default port 8080
+xfweb serve
 
-# Or via Docker
-docker run -p 8080:8080 xfweb/xfweb
+# Custom host and port
+xfweb serve --host 127.0.0.1 --port 9090
+
+# Dev mode with auto-reload
+xfweb serve --reload
 ```
+
+**Server options:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--host` | `0.0.0.0` | Bind address |
+| `--port` | `8080` | Listen port |
+| `--reload` | off | Auto-reload on code changes |
+
+Once running, open:
+- **Dashboard:** `http://localhost:8080/dashboard`
+- **API docs:** `http://localhost:8080/docs`
+- **Health check:** `http://localhost:8080/health`
+
+---
+
+### `xfweb crawl` — Map an attack surface
+
+```bash
+# Crawl a site and list discovered URLs
+xfweb crawl -t https://example.com
+
+# Save crawl results
+xfweb crawl -t https://example.com -o ./crawl_results
+```
+
+---
+
+### `xfweb plugins` — List available plugins
+
+```bash
+# Show all 71 plugins with categories and descriptions
+xfweb plugins
+```
+
+---
+
+### API Endpoints (when `xfweb serve` is running)
+
+```bash
+# Start a scan via API
+curl -X POST http://localhost:8080/api/v1/scan \
+  -H "Content-Type: application/json" \
+  -d '{"target": "https://example.com", "plugins": ["sqli", "xss"]}'
+
+# Check scan status
+curl http://localhost:8080/api/v1/scan/{scan_id}
+
+# Get findings
+curl http://localhost:8080/api/v1/scan/{scan_id}/findings
+
+# Get findings filtered by severity
+curl http://localhost:8080/api/v1/scan/{scan_id}/findings?severity=high
+
+# Export results (json or sarif)
+curl http://localhost:8080/api/v1/results/{scan_id}/export?format=sarif
+
+# Stop a running scan
+curl -X DELETE http://localhost:8080/api/v1/scan/{scan_id}
+
+# List all plugins
+curl http://localhost:8080/api/v1/plugins
+
+# List scan profiles
+curl http://localhost:8080/api/v1/profiles
+
+# Health check
+curl http://localhost:8080/health
+
+# Real-time updates via WebSocket
+wscat -c ws://localhost:8080/ws/scan/{scan_id}
+```
+
+---
 
 ### Docker
 
 ```bash
-# Build
+# Build the image
 docker build -t xfweb .
 
-# Run scan
-docker run --rm xfweb scan --target https://example.com -o /results
+# Run a scan
+docker run --rm xfweb scan -t https://example.com -o /results
+
+# Run with a profile
+docker run --rm xfweb scan -t https://example.com --profile owasp_top10 -o /results
 
 # Run API server
 docker run -p 8080:8080 xfweb serve
-```
 
-## API Usage
-
-```bash
-# Start a scan
-curl -X POST http://localhost:8080/api/scan \
-  -H "Content-Type: application/json" \
-  -d '{"target": "https://example.com", "plugins": ["sqli", "xss"]}'
-
-# Get findings
-curl http://localhost:8080/api/scan/{scan_id}/findings
-
-# Real-time via WebSocket
-wscat -c ws://localhost:8080/ws/scan/{scan_id}
-
-# List all plugins
-curl http://localhost:8080/api/plugins
-
-# Health check
-curl http://localhost:8080/api/health
+# Run with Burp proxy
+docker run --rm --network host xfweb scan -t https://example.com --proxy http://127.0.0.1:8080
 ```
 
 ## Plugin Categories
@@ -184,8 +301,8 @@ xfweb/
 
 ```bash
 # Clone
-git clone https://github.com/xfweb/xfweb.git
-cd xfweb
+git clone https://github.com/Cazo-Net/Xfweb.git
+cd Xfweb
 
 # Install in dev mode
 pip install -e ".[dev]"
