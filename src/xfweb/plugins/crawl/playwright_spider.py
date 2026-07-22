@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import shutil
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -33,6 +34,54 @@ JS_ROUTE_PATTERNS = [
 ]
 
 API_PATTERN = re.compile(r'["\']/(api|v[0-9]+|graphql|rest)/[^"\']*["\']')
+
+_playwright_ok: bool | None = None
+
+
+def _check_playwright_driver() -> bool:
+    """Check if the Playwright Node.js driver is compatible with this system."""
+    global _playwright_ok
+    if _playwright_ok is not None:
+        return _playwright_ok
+
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        logger.warning("xfweb.playwright.python_package_missing")
+        _playwright_ok = False
+        return False
+
+    node_bin = shutil.which("node")
+    if node_bin is None:
+        logger.warning("xfweb.playwright.node_not_found", hint="Install Node.js: apt install nodejs")
+        _playwright_ok = False
+        return False
+
+    async def _test() -> None:
+        pw = async_playwright()
+        obj = await pw.start()
+        await obj.stop()
+
+    try:
+        asyncio.get_event_loop().run_until_complete(
+            asyncio.wait_for(_test(), timeout=15.0)
+        )
+        _playwright_ok = True
+        return True
+    except Exception as exc:
+        err = str(exc)
+        if "backgroundColorNames" in err or "getter" in err:
+            hint = (
+                "Node.js version incompatible with system Playwright. "
+                "Fix: pip install playwright && playwright install chromium"
+            )
+        elif "No such file" in err or "node" in err.lower():
+            hint = "Run: playwright install chromium"
+        else:
+            hint = "Run: pip install playwright && playwright install chromium"
+        logger.warning("xfweb.playwright.driver_broken", error=err, hint=hint)
+        _playwright_ok = False
+        return False
 
 
 class PlaywrightCrawlerPlugin(CrawlPlugin):
@@ -57,11 +106,10 @@ class PlaywrightCrawlerPlugin(CrawlPlugin):
 
         discovered: list[FuzzableRequest] = []
 
-        try:
-            from playwright.async_api import async_playwright
-        except ImportError:
-            logger.warning("xfweb.playwright.not_installed")
+        if not _check_playwright_driver():
             return []
+
+        from playwright.async_api import async_playwright
 
         try:
             async with async_playwright() as p:
